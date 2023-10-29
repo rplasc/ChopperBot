@@ -1,5 +1,6 @@
 import asyncio
 from code import interact
+from email import message
 import io
 import discord
 from discord import Interaction, app_commands
@@ -9,18 +10,22 @@ import openai
 from utils.openai_util import get_openai_response, generate_img
 import os
 import aiohttp
-
-openai.api_key = client.openAI_API_key
-current_personality = "Chopper Boy"  # Default personality
-is_custom_personality = False
-
-# Maintain a dynamic conversation history
-conversation_histories = {}
+from utils.content_filter import censor_curse_words
 
 @client.event
 async def on_ready():
     await client.tree.sync()
     print(f'Logged in as {client.user.name}')
+
+# Sets up OpenAI api for conversation feature
+openai.api_key = client.openAI_API_key
+current_personality = "Chopperbot"  # Default personality
+is_custom_personality = False
+
+# Maintain a dynamic conversation history
+conversation_histories = {}
+MAX_HISTORY_LENGTH = 10
+whispers_conversation_histories = {}
 
 @client.event
 async def on_message(message):
@@ -29,13 +34,14 @@ async def on_message(message):
         return
 
     channel_id = message.channel.id
-    user_message_content = message.content
+    user_message_content = censor_curse_words(message.content) # Censors certain words
     username = str(message.author)
 
     # Update the conversation history
     if channel_id not in conversation_histories:
         conversation_histories[channel_id] = []
     conversation_histories[channel_id].append({"role": "user", "content": user_message_content})
+    conversation_histories[channel_id] = conversation_histories[channel_id][-MAX_HISTORY_LENGTH:]
 
     # If the bot is mentioned or addressed, generate a response using OpenAI
     if client.user.mentioned_in(message):
@@ -75,13 +81,13 @@ async def set_personality(interaction: discord.Interaction, personality: str):
         embed = discord.Embed(title="Set Personality",description=f'Invalid personality. Available options are: {", ".join(personalities.keys())}')
         await interaction.response.send_message(embed=embed)
 
-@client.tree.command(name="custom_personality", description="Set the bot's personality to a character/celebrity")
-async def custom_personality(interaction: discord.Interaction, personality: str):
+@client.tree.command(name="pretend", description="Set the bot's personality to a character/celebrity")
+async def pretend(interaction: discord.Interaction, personality: str):
     global current_personality, is_custom_personality,conversation_histories
     current_personality = custom_personalities(personality)
     is_custom_personality = True
     conversation_histories.clear()
-    embed = discord.Embed(title="Custom Personality",description=f"Set personality to {personality}")
+    embed = discord.Embed(title="Personality Change",description=f"I will now act like {personality}")
     await interaction.response.send_message(embed=embed)
     
 @client.tree.command(name="image",description="Generates image of prompt")
@@ -89,11 +95,11 @@ async def generate_image(interaction: discord.Interaction, description: str):
     # Generate image using DALL·E
     await interaction.response.defer()
     path = await generate_img(description)
-    file = discord.File(path, filename=f"selfie.png")
+    file = discord.File(path, filename=f"{description}.png")
     embed = discord.Embed(title="Generated Image")
     embed.set_image(url=f"attachment://{file}")
     await interaction.followup.send(file=file,embed=embed)
-    
+    os.remove(path)
     
 # 
 @client.tree.command(name="selfie",description="Generates image based off personality")
@@ -106,13 +112,14 @@ async def selfie(interaction: discord.Interaction):
     
     embed = discord.Embed().set_image(url=f"attachment://{file}")
     await interaction.followup.send(file=file,embed=embed)
+    os.remove(path)
     
 # Resets "memory" and personality back to default
 @client.tree.command(name="reset",description="Resets to default personality")
 async def reset(interaction: discord.Interaction):
     global current_personality
-    if current_personality != 'Chopper Boy':
-        current_personality = "Chopper Boy"
+    if current_personality != 'Chopperbot':
+        current_personality = "Chopperbot"
         
     conversation_histories.clear()
     await interaction.response.send_message("My memory has been wiped!")
@@ -125,5 +132,35 @@ async def help(interaction: discord.Interaction):
     for Command in commandlist:
         embed.add_field(name=Command.name,value=Command.description if Command.description else Command.name, inline=False)
     await interaction.response.send_message(embed=embed)
+    
+# Allows private conversations
+@client.tree.command(name="whisper",description="Ask and recieve response quietly.")
+async def whisper(interaction: discord.Interaction, prompt: str):
+    global is_custom_personality
+    user_message_content = censor_curse_words(prompt)
+    
+    user_id = str(interaction.user.id)
+    
+    # Initialize conversation history for the user if it doesn't exist
+    if user_id not in whispers_conversation_histories:
+        whispers_conversation_histories[user_id] = []
+    
+    # Limit the conversation history to 5 messages for each user
+    whispers_conversation_histories[user_id].append({"role": "user", "content": user_message_content})
+    whispers_conversation_histories[user_id] = whispers_conversation_histories[user_id][-5:]
+
+    if is_custom_personality == False:
+        messages = [
+            {"role": "system", "content": personalities[current_personality]}, 
+            {"role": "user", "content": user_message_content}
+        ]
+    else:
+        messages = [
+            {"role": "system", "content": current_personality}, 
+            {"role": "user", "content": user_message_content}
+        ]
+
+    client_response = await get_openai_response(messages)
+    await interaction.response.send_message(client_response, ephemeral=True)
     
 client.run(os.getenv('DISCORD_BOT_TOKEN'))
