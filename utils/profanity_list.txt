@@ -1,0 +1,3 @@
+curse_word1
+curse_word2
+....
