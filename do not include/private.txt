@@ -1,0 +1,1 @@
+https://github.com/Zero6992/chatGPT-discord-bot/blob/main/src/bot.py

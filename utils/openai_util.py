@@ -14,7 +14,7 @@ async def get_openai_response(messages):
         async with session.post(
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {openai.api_key}"},
-            json={"model": "gpt-3.5-turbo", "messages": messages, "temperature": 0.8, "max_tokens": 256}
+            json={"model": "gpt-4-0613", "messages": messages, "temperature": 1, "max_tokens": 256}
         ) as response:
             data = await response.json()
             return data['choices'][0]['message']['content']
@@ -25,10 +25,11 @@ async def generate_img(description):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     
     response = openai.Image.create(
-        model="image-alpha-001",
+        model="dall-e-2",
         prompt=description,
+        size="1024x1024",
+        quality="standard",
         n=1,
-        size="256x256",
         response_format="b64_json"
     )
 

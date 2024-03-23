@@ -1,72 +1,88 @@
+import os
 import asyncio
-from code import interact
-from email import message
 import io
+import random
+import openai
+import datetime
 import discord
+import aiohttp
+from typing import List
 from discord import Interaction, app_commands
 from src.aclient import client
 from src.personalities import personalities, custom_personalities # Importing the personalities
-import openai
 from utils.openai_util import get_openai_response, generate_img
-import os
-import aiohttp
-from utils.content_filter import censor_curse_words
+from utils.content_filter import censor_curse_words, filter_controversial
+from src.Moderation.yappers import load_yaps, save_yaps
 
-@client.event
-async def on_ready():
-    await client.tree.sync()
-    print(f'Logged in as {client.user.name}')
-
-# Sets up OpenAI api for conversation feature
+# Setup OpenAI api for conversation feature
 openai.api_key = client.openAI_API_key
 current_personality = "Chopperbot"  # Default personality
 is_custom_personality = False
 
 # Maintain a dynamic conversation history
 conversation_histories = {}
-MAX_HISTORY_LENGTH = 10
+MAX_HISTORY_LENGTH = 20
 whispers_conversation_histories = {}
+
+# Load Yappers Protocol
+yaps_counter = load_yaps()
+processed_messages = set()
+
+@client.event
+async def on_ready():
+    await client.tree.sync()
+    print(f'Logged in as {client.user.name}')
 
 @client.event
 async def on_message(message):
-    # Avoid recursive loops with the bot's own messages
     if message.author == client.user:
         return
+    
+    if isinstance (message.channel, discord.DMChannel):
+        await message.channel.send("Chopperbot is not available here.")
+        return
 
+    if message.id not in processed_messages:
+        server_id = str(message.guild.id)
+        user_id = str(message.author.id)
+        yaps_counter[server_id] = yaps_counter.get(server_id, {})
+        yaps_counter[server_id][user_id] = yaps_counter[server_id].get(user_id, 0) + 1
+        
+        if len(processed_messages) == 10:
+            processed_messages.clear()
+    
+        save_yaps(yaps_counter)
+        processed_messages.add(message.id)
+    
+    server_id = str(message.guild.id)
     channel_id = message.channel.id
-    user_message_content = censor_curse_words(message.content) # Censors certain words
-    username = str(message.author)
+    user_message_content = censor_curse_words(message.content)
+    
+    if server_id not in conversation_histories:
+        conversation_histories[server_id] = {}
+    if channel_id not in conversation_histories[server_id]:
+        conversation_histories[server_id][channel_id] = []
+        
+    user_info = f"{message.author.id} ({message.author.name})"
+    conversation_histories[server_id][channel_id].append({"role": "user", "content": f"{user_info}: {user_message_content}"})
+    conversation_histories[server_id][channel_id] = conversation_histories[server_id][channel_id][-MAX_HISTORY_LENGTH:]
 
-    # Update the conversation history
-    if channel_id not in conversation_histories:
-        conversation_histories[channel_id] = []
-    conversation_histories[channel_id].append({"role": "user", "content": user_message_content})
-    conversation_histories[channel_id] = conversation_histories[channel_id][-MAX_HISTORY_LENGTH:]
-
-    # If the bot is mentioned or addressed, generate a response using OpenAI
     if client.user.mentioned_in(message):
         global is_custom_personality
         if is_custom_personality == False:
             messages = [
                 {"role": "system", "content": personalities[current_personality]},
-             ] + conversation_histories[channel_id]
+             ] + conversation_histories[server_id][channel_id]
         else:
             messages = [
-            {"role": "system", "content": current_personality},
-            ] + conversation_histories[channel_id]
-
-        client_response = await get_openai_response(messages)
-
-        conversation_histories[channel_id].append({"role": "assistant", "content": client_response})
-
-        await message.channel.send(client_response)
-
-# Slash Commands Section
-@client.tree.command(name="ping", description="Get bot latency")
-async def ping(interaction: discord.Interaction):
-    # Converts latency to milliseconds and sends through embedded message
-    embed = discord.Embed(title="Ping",description=f"Pong!Current latency is {round(client.latency * 1000)}.")
-    await interaction.response.send_message(embed=embed)
+                {"role": "system", "content": current_personality},
+            ] + conversation_histories[server_id][channel_id]
+        try:
+            client_response = await get_openai_response(messages)
+            conversation_histories[server_id][channel_id].append({"role": "assistant", "content": client_response})
+            await message.channel.send(client_response)
+        except Exception as e:
+            await message.channel.send('Sorry, I am not able to respond.')
 
 @client.tree.command(name="set_personality", description="Set the bot's personality")
 async def set_personality(interaction: discord.Interaction, personality: str):
@@ -75,44 +91,59 @@ async def set_personality(interaction: discord.Interaction, personality: str):
         current_personality = personality
         is_custom_personality = False
         conversation_histories.clear()
-        embed = discord.Embed(title="Set Personality",description=f"Personality has been set to {personality}")
+        embed = discord.Embed(title="Set Personality", description=f"Personality has been set to {personality}")
         await interaction.response.send_message(embed=embed)
     else:
-        embed = discord.Embed(title="Set Personality",description=f'Invalid personality. Available options are: {", ".join(personalities.keys())}')
+        embed = discord.Embed(title="Set Personality", description=f'Invalid personality. Available options are: {", ".join(personalities.keys())}')
         await interaction.response.send_message(embed=embed)
-
+        
+async def personality_autocomplete(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+    choices = [app_commands.Choice(name=personality, value=personality) for personality in personalities.keys() if current.lower() in personality.lower()]
+    return choices
+    
 @client.tree.command(name="pretend", description="Set the bot's personality to a character/celebrity")
 async def pretend(interaction: discord.Interaction, personality: str):
-    global current_personality, is_custom_personality,conversation_histories
-    current_personality = custom_personalities(personality)
-    is_custom_personality = True
-    conversation_histories.clear()
-    embed = discord.Embed(title="Personality Change",description=f"I will now act like {personality}")
+    global current_personality, is_custom_personality, conversation_histories
+    censored_personality = censor_curse_words(personality)
+    if filter_controversial(censored_personality):
+        current_personality = custom_personalities(censored_personality)
+        is_custom_personality = True
+        conversation_histories.clear()
+        embed = discord.Embed(title="Personality Change", description=f"I will now act like {censored_personality}")
+    else:
+        embed = discord.Embed(title="Personality Change", description="Sorry, I cannot pretend to be that person.")
     await interaction.response.send_message(embed=embed)
-    
+
+
 @client.tree.command(name="image",description="Generates image of prompt")
 async def generate_image(interaction: discord.Interaction, description: str):
     # Generate image using DALL·E
     await interaction.response.defer()
-    path = await generate_img(description)
-    file = discord.File(path, filename=f"{description}.png")
-    embed = discord.Embed(title="Generated Image")
-    embed.set_image(url=f"attachment://{file}")
-    await interaction.followup.send(file=file,embed=embed)
-    os.remove(path)
+    try:
+        path = await generate_img(description)
+        file = discord.File(path, filename=f"image.png")
+        embed = discord.Embed(title="Generated Image")
+        embed.set_image(url=f"attachment://image.png")
+        await interaction.followup.send(embed=embed,file=file)
+        os.remove(path)
+    except Exception as e:
+        await interaction.followup.send(content="Could not generate image!")
     
-# 
+# Generates image based on personality
 @client.tree.command(name="selfie",description="Generates image based off personality")
 async def selfie(interaction: discord.Interaction):
-    description = current_personality
-    await interaction.response.defer()
-    description = f"Personafication of {current_personality}"
-    path = await generate_img(description)
-    file = discord.File(path, filename=f"selfie.png")
+    try:
+        description = current_personality
+        await interaction.response.defer()
+        description = f"Personafication of {current_personality}"
+        path = await generate_img(description)
+        file = discord.File(path, filename=f"selfie.png")
     
-    embed = discord.Embed().set_image(url=f"attachment://{file}")
-    await interaction.followup.send(file=file,embed=embed)
-    os.remove(path)
+        embed = discord.Embed().set_image(url=f"attachment://selfie.png")
+        await interaction.followup.send(file=file,embed=embed)
+        os.remove(path)
+    except Exception as e:
+       await interaction.response.send_message('I am feeling a little shy right now.. *uwu*')
     
 # Resets "memory" and personality back to default
 @client.tree.command(name="reset",description="Resets to default personality")
@@ -162,5 +193,116 @@ async def whisper(interaction: discord.Interaction, prompt: str):
 
     client_response = await get_openai_response(messages)
     await interaction.response.send_message(client_response, ephemeral=True)
+    
+@client.tree.command(name="yaps", description="Shows number of messages you have sent")
+async def yaps(interaction: discord.Interaction):
+    server_id = str(interaction.guild.id)
+    user_id = str(interaction.user.id)
+    
+    server_yaps = yaps_counter.get(server_id, {})
+    yaps = server_yaps.get(user_id, 0)
+    
+    await interaction.response.send_message(f'You have sent {yaps} messages so far.')
+
+    
+@client.tree.command(name='leaderboard', description='Shows top 10 yappers in the server')
+async def yappers(interaction: discord.Interaction):
+    server_id = str(interaction.guild.id)
+    server_yaps = yaps_counter.get(server_id, {})
+    sorted_yappers = sorted(server_yaps.items(), key=lambda x: x[1], reverse=True)
+    
+    embed = discord.Embed(title="Top 10 Yappers", description='In Decreasing Order:')
+    
+    for i, (user_id, yaps) in enumerate(sorted_yappers, start=1):
+        user = await client.fetch_user(int(user_id))
+        if user is not None and not user.bot:
+            embed.add_field(name=f'#{i}', value=f'{user.name} {yaps}', inline=False)
+            if i == 10:
+                break
+                
+    await interaction.response.send_message(embed=embed)
+
+@client.tree.command(name='dox', description='Generate address of user.')
+async def address(interaction: discord.Interaction, user: discord.Member):
+    if user not in interaction.guild.members:
+        await interaction.response.send_message("User not found in this server.")
+        return
+    if user is interaction.user:
+        message = "Your"
+    else:
+        message = f"{user.display_name}'s"
+
+    number = random.randint(100, 500)
+    streets = ["Mercy Ave", "Winton Ln", "Lucio Dr", "Hanzo Rd"]
+    street = random.choice(streets)
+    await interaction.response.send_message(f"{message} random address is: {number} {street}, Merced, CA 95340")
+    
+def num_to_emoji(num):
+    # Converts a number to a regional indicator emoji (1-10)
+    regional_indicator_a = 0x1F1E6
+    return chr(regional_indicator_a + num - 1)
+    
+@client.tree.command(name="poll", description="Create a poll using reactions")
+async def poll(interaction: discord.Interaction, question: str, *, choices: str):
+    options = choices.split(',')
+    if len(options) < 2 or len(options) > 10:
+        await interaction.response.send_message("Please provide between 2 and 10 options.")
+        return
+    
+    # Format the poll message
+    poll_message = f"**{question}**\n\n"
+    for i, option in enumerate(options, start=1):
+        poll_message += f":{num_to_emoji(i)}: {option}\n"
+    
+    embed = discord.Embed(title="Poll", description=poll_message, color=discord.Color.blurple())
+    embed.set_footer(text=f"Started by {interaction.user}")
+    
+    await interaction.response.send_message("Creating Poll:")
+    
+    # Send the poll message and add reactions
+    message = await interaction.channel.send(embed=embed)
+    for i in range(len(options)):
+        emoji = num_to_emoji(i+1)
+        await message.add_reaction(emoji)
+
+@client.tree.command(name="play", description="Plays an attached file in the user's current voice channel")
+async def play(interaction: discord.Interaction, file: discord.Attachment):
+    # Check if the user is in a voice channel
+    if interaction.guild.voice_client is None:
+        await interaction.response.send_message("I'm not in a voice channel.")
+        return
+
+    # Check if there are attachments
+    if not interaction.data['options'][0]['value']:
+        await interaction.response.send_message("Please attach a file to play.")
+        return
+
+    # Get the first attachment (assuming only one file is uploaded)
+    attachment = interaction.data['options'][0]['value']
+    file_path = f"temp/{file.filename}"  # Save the file temporarily
+    await attachment.save(file_path)
+
+    # Join the user's voice channel
+    voice_channel = interaction.author.voice.channel
+    voice_client = interaction.guild.voice_client
+    if voice_client.channel != voice_channel:
+        await voice_client.move_to(voice_channel)
+
+    # Check if the file exists
+    if not os.path.exists(file_path):
+        await interaction.response.send_message("File not found.")
+        return
+
+    # Play the file
+    voice_client.play(discord.FFmpegPCMAudio(file_path), after=lambda e: print(f"Finished playing: {e}"))
+
+    def after_play(error):
+        os.remove(file_path)
+        if error:
+            print(f"Error playing audio: {error}")
+
+    voice_client.source = discord.PCMVolumeTransformer(voice_client.source)
+    voice_client.source.volume = 0.5  # Set the volume (0.0 to 2.0)
+    voice_client.source.after = after_play
     
 client.run(os.getenv('DISCORD_BOT_TOKEN'))
