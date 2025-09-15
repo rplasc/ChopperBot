@@ -1,0 +1,6 @@
+aiohttp==3.8.6
+discord.py==2.3.2
+discord-py-slash-command==4.2.1
+python-dotenv
+openai==0.28.1
+typing_extensions==4.8.0

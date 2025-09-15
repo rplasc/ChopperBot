@@ -1,5 +1,3 @@
-import discord
-import os
 from src import bot
 from dotenv import load_dotenv
 

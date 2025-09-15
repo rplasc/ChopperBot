@@ -1,9 +1,7 @@
 import discord
 import os
-import asyncio
 from dotenv import load_dotenv
 from discord import Intents, app_commands
-import openai
 
 load_dotenv()  # take environment variables from .env.
 
@@ -17,6 +15,8 @@ class aclient(discord.Client):
         self.current_channel = None
         self.activity = discord.Activity(type = discord.ActivityType.watching,name='Border')
         self.isPrivate = False
+        self.current_personality = "Chopperbot"
+        self.is_custom_personality = False
         
         # ChatGPT integration
         self.openAI_API_key = os.getenv('OPENAI_API_KEY')

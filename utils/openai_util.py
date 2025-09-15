@@ -1,7 +1,6 @@
 from base64 import b64decode
 from os import path, remove, makedirs
 from pathlib import Path
-import discord
 import openai
 import aiohttp
 import json
