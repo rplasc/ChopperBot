@@ -62,36 +62,6 @@ async def on_message(message):
             await message.channel.send(client_response)
         except Exception as e:
             await message.channel.send('Sorry, I am not able to respond.')
-
-@client.event
-async def on_member_join(member: discord.Member):
-    # Choose a channel to send welcome messages (e.g., system channel or first text channel)
-    channel = member.guild.system_channel
-    if channel is None:
-        for ch in member.guild.text_channels:
-            if ch.permissions_for(member.guild.me).send_messages:
-                channel = ch
-                break
-
-    if channel is None:
-        return
-
-    # Build a prompt for GPT
-    if client.is_custom_personality == False:
-        messages = [
-            {"role": "system", "content": personalities[client.current_personality]},
-            {"role": "user", "content": f"A new member named {member.name} has joined the server. Write a warm, funny, and engaging welcome message addressed to them."}
-            ]
-    else:
-        messages = [
-            {"role": "system", "content": client.current_personality},
-            {"role": "user", "content": f"A new member named {member.name} has joined the server. Write a warm, funny, and engaging welcome message addressed to them."}
-        ]
-    try:
-        response = await get_openai_response(messages)
-        await channel.send(response)
-    except Exception as e:
-        await channel.send(f"Welcome {member.mention}! 🎉")
     
 @client.tree.command(name= "help",description="List of all commands")
 async def help(interaction: discord.Interaction):
