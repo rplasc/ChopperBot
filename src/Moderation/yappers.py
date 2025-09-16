@@ -1,8 +1,12 @@
 import os
 import aiosqlite
+import asyncio
 
 DB_PATH =  "data/yaps.db"
+
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
+write_queue = asyncio.Queue()
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -17,16 +21,22 @@ async def init_db():
         await db.execute("CREATE INDEX IF NOT EXISTS idx_server_id ON yaps (server_id)")    
         await db.commit()
 
-async def increment_yap(server_id: str, user_id: str):
+async def queue_increment(server_id: str, user_id: str):
+    await write_queue.put((server_id, user_id))
+
+async def increment_yap():
     try:
         async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("""
-                INSERT INTO yaps (server_id, user_id, count)
-                VALUES (?, ?, 1)
-                ON CONFLICT(server_id, user_id)
-                DO UPDATE SET count = count + 1
-            """, (server_id, user_id))
-            await db.commit()
+             while True:
+                server_id, user_id = await write_queue.get()
+                await db.execute("""
+                    INSERT INTO yaps (server_id, user_id, count)
+                    VALUES (?, ?, 1)
+                    ON CONFLICT(server_id, user_id)
+                    DO UPDATE SET count = count + 1
+                """, (server_id, user_id))
+                await db.commit()
+                write_queue.task_done()
     except aiosqlite.Error as e:
         print(f"Database error in increment_yap: {e}")
 
