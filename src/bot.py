@@ -79,6 +79,7 @@ async def help(interaction: Interaction):
 # Allows ChatGPT conversations
 @client.tree.command(name="ask",description="Ask and recieve response quietly from ChatGPT.")
 async def whisper(interaction: Interaction, prompt: str):
+    await interaction.response.defer(ephemeral=True, thinking=True)
     user_message_content = censor_curse_words(prompt)
     
     user_id = str(interaction.user.id)
@@ -100,7 +101,7 @@ async def whisper(interaction: Interaction, prompt: str):
         whispers_conversation_histories[user_id].append({"role": "assistant", "content": client_response})
     except:
         client_response = "I am currently unavailable."
-    await interaction.response.send_message(client_response, ephemeral=True)
+    await interaction.followup.send(client_response, ephemeral=True)
 
 @client.tree.command(name="set_personality", description="Set the bot's personality")
 async def set_personality(interaction: Interaction, personality: str):
