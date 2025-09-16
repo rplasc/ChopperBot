@@ -40,7 +40,7 @@ async def on_message(message):
     await queue_increment(server_id, user_id)
 
     channel_id = message.channel.id
-    user_message_content = censor_curse_words(message.content)
+    user_message_content = message.content
     
     if server_id not in conversation_histories:
         conversation_histories[server_id] = {}
@@ -91,19 +91,13 @@ async def whisper(interaction: Interaction, prompt: str):
     whispers_conversation_histories[user_id].append({"role": "user", "content": user_message_content})
     whispers_conversation_histories[user_id] = whispers_conversation_histories[user_id][-5:]
 
-    if client.is_custom_personality == False:
-        messages = [
-            {"role": "system", "content": personalities[client.current_personality]}, 
-            {"role": "user", "content": user_message_content}
-        ]
-    else:
-        messages = [
-            {"role": "system", "content": client.current_personality}, 
-            {"role": "user", "content": user_message_content}
-        ]
+    messages = [
+        {"role": "system", "content": client.current_personality},
+    ] + whispers_conversation_histories[user_id]
     
     try:
-        client_response = await get_kobold_response(messages)
+        client_response = await get_openai_response(messages)
+        whispers_conversation_histories[user_id].append({"role": "assistant", "content": client_response})
     except:
         client_response = "I am currently unavailable."
     await interaction.response.send_message(client_response, ephemeral=True)
