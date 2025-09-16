@@ -2,7 +2,7 @@ import random
 from discord import Interaction, Embed, Member
 from src.aclient import client
 from utils.tarot_data import TAROT_CARDS
-from utils.openai_util import get_openai_response
+from utils.kobaldcpp_util import get_kobold_response
 from utils.spellbook import SPELLS
 from src.personalities import personalities
 from utils.horoscope import ZODIAC_SIGNS, get_horoscope
@@ -49,7 +49,7 @@ async def tarot_spread(interaction: Interaction):
         ]
 
     try:
-        interpretation = await get_openai_response(messages)
+        interpretation = await get_kobold_response(messages)
     except Exception:
         interpretation = "The cards suggest change, growth, and reflection."
 

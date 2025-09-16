@@ -4,6 +4,7 @@ from discord import Interaction, Embed, app_commands
 from src.aclient import client
 from utils.news_sources import NEWS_SOURCES
 
+# TODO: Add AI summary
 @client.tree.command(name="news", description="Get the latest headlines from a news outlet")
 async def news(interaction: Interaction, outlet: str):
     outlet = outlet.lower()
@@ -28,7 +29,7 @@ async def news(interaction: Interaction, outlet: str):
         title = item.find("title").text
         link = item.find("link").text
         embed.add_field(name=title, value=f"[Read more]({link})", inline=False)
-
+    
     await interaction.response.send_message(embed=embed)
 
 @news.autocomplete("outlet")
