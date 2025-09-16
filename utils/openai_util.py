@@ -1,5 +1,5 @@
 from base64 import b64decode
-from os import path, remove, makedirs
+from os import remove
 from pathlib import Path
 import openai
 import aiohttp
