@@ -13,7 +13,7 @@ class aclient(discord.Client):
         super().__init__(intents = intents)
         self.tree = app_commands.CommandTree(self)
         self.current_channel = None
-        self.activity = discord.Activity(type = discord.ActivityType.watching,name='Border')
+        self.activity = discord.Activity(type = discord.ActivityType.listening,name='chopperboi')
         self.isPrivate = False
         self.current_personality = "Chopperbot"
         self.is_custom_personality = False

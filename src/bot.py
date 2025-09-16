@@ -7,7 +7,7 @@ from src.personalities import personalities, custom_personalities
 from utils.openai_util import get_openai_response
 from utils.content_filter import censor_curse_words, filter_controversial
 from src.Moderation.yappers import init_db, increment_yap, queue_increment
-from src.commands import user, yaps, images, mystical
+from src.commands import user, yaps, images, mystical, news
 
 # Setup OpenAI api for conversation feature
 openai.api_key = client.openAI_API_key
