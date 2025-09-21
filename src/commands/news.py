@@ -2,7 +2,9 @@ import aiohttp
 import xml.etree.ElementTree as ET
 from discord import Interaction, Embed, app_commands
 from src.aclient import client
+from src.personalities import personalities
 from utils.news_sources import NEWS_SOURCES
+from utils.kobaldcpp_util import get_kobold_response
 
 # TODO: Add AI summary
 @client.tree.command(name="news", description="Get the latest headlines from a news outlet")
@@ -24,11 +26,45 @@ async def news(interaction: Interaction, outlet: str):
     root = ET.fromstring(text)
     items = root.findall(".//item")[:5]
 
+    headlines = []
     embed = Embed(title=f"📰 Top Headlines from {outlet.upper()}")
     for item in items:
         title = item.find("title").text
+        if title:
+            headlines.append(title)
         link = item.find("link").text
         embed.add_field(name=title, value=f"[Read more]({link})", inline=False)
+
+    if not headlines:
+        await interaction.response.send_message("No headlines found.", ephemeral=True)
+        return
+
+    summary_prompt = (
+        "Here are some recent news headlines:\n\n"
+        + "\n".join(f"- {h}" for h in headlines)
+        + "\n\nPlease provide a short (2–3 sentence) overall summary of these headlines."
+    )
+
+    if client.is_custom_personality == False:
+        messages = [
+            {"role": "system", "content": personalities[client.current_personality]},
+            {"role": "user", "content": summary_prompt}
+        ]
+    else:
+        messages = [
+            {"role": "system", "content": client.current_personality},
+            {"role": "user", "content": summary_prompt}
+        ]
+
+    try:
+        summary = await get_kobold_response(messages)
+    except Exception:
+        summary = "Currently unavailable."
+
+    if len(summary) > 1024:
+        summary = summary[:1021] + "..."
+
+    embed.add_field(name="📝 Summary", value=summary, inline=False)
     
     await interaction.response.send_message(embed=embed)
 

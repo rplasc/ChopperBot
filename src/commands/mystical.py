@@ -87,3 +87,29 @@ async def cast(interaction: Interaction, target: Member):
     target_id = target._user.id
     spell = random.choice(SPELLS)
     await interaction.response.send_message(f"<@{user_id}> has cast **{spell['name']}!** on <@{target_id}>! {spell['message']}")
+
+@client.tree.command(name="crystal_ball", description="Ask the crystal a question and it will generate an answer for you.")
+async def crystal_ball(interaction: Interaction, question: str):
+    await interaction.response.defer(thinking=True)
+
+    if client.is_custom_personality == False:
+        messages = [
+            {"role": "system", "content": personalities[client.current_personality]}, 
+            {"role": "user", "content": f"Here is a question:\n{question}\nPlease give a vague response."}
+        ]
+    else:
+        messages = [
+            {"role": "system", "content": client.current_personality}, 
+            {"role": "user", "content": f"Here is a question:\n{question}\nPlease give a short and vague yes, no, or maybe response."}
+        ]
+
+    try:
+        response = await get_kobold_response(messages)
+    except Exception:
+        response = "The future is too foggy at the moment."
+
+    embed = Embed()
+    embed.add_field(name="Your Question", value=question, inline=False)
+    embed.add_field(name="🔮 Crystal Ball", value=response, inline=False)
+
+    await interaction.followup.send(embed=embed)
