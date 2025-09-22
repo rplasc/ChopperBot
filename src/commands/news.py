@@ -6,7 +6,6 @@ from src.personalities import personalities
 from utils.news_sources import NEWS_SOURCES
 from utils.kobaldcpp_util import get_kobold_response
 
-# TODO: Add AI summary
 @client.tree.command(name="news", description="Get the latest headlines from a news outlet")
 async def news(interaction: Interaction, outlet: str):
     outlet = outlet.lower()
