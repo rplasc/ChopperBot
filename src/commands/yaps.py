@@ -1,6 +1,6 @@
 from discord import Interaction, Embed
 from src.aclient import client
-from src.Moderation.yappers import show_yaps_user, show_yaps_leaderboard
+from src.moderation.yappers import show_yaps_user, show_yaps_leaderboard
 @client.tree.command(name="yaps", description="Shows number of messages you have sent")
 async def yaps(interaction: Interaction):
     server_id = str(interaction.guild.id)

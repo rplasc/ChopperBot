@@ -31,12 +31,11 @@ async def recommend(interaction: Interaction, type: str, mood: str, genre: str =
         await interaction.response.send_message("Type must be 'song' or 'movie'.", ephemeral=True)
         return
 
-    # TODO: EDIT WHEN FIXED OR TESTING
     if results < 1:
         results = 1
     elif results > 5:
-        #results = 5
-        results = 1
+        results = 5
+
 
     genre_text = "any genre (wildcard)" if genre.lower() == "any" else genre
     rating_text = "any rating" if rating.lower() == "any" else rating
@@ -66,10 +65,6 @@ async def recommend(interaction: Interaction, type: str, mood: str, genre: str =
     except Exception:
         recommendation = "I couldn't think of any right now."
 
-    embed = Embed(
-        title=f"🎶🎬 Recommendation ({type.capitalize()})",
-        description=f"**Mood:** {mood}\n**Genre:** {genre_text}\n**Rating:** {rating_text}\n**Results:** {results}"
-    )
-    embed.add_field(name="Suggestions", value=recommendation, inline=False)
 
-    await interaction.followup.send(embed=embed)
+
+    await interaction.followup.send(recommendation)
