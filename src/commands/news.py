@@ -1,9 +1,10 @@
 import aiohttp
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from discord import Interaction, Embed, app_commands
 from src.aclient import client
 from src.personalities import personalities
-from utils.news_sources import NEWS_SOURCES
+from utils.news_sources import NEWS_SOURCES, NEWS_ICONS
 from utils.kobaldcpp_util import get_kobold_response
 
 @client.tree.command(name="news", description="Get the latest headlines from a news outlet")
@@ -19,19 +20,27 @@ async def news(interaction: Interaction, outlet: str):
     url = NEWS_SOURCES[outlet]
 
     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            text = await resp.text()
+       async with session.get(url) as resp:
+        if resp.status != 200:
+            await interaction.response.send_message(
+                f"⚠️ Failed to fetch news from {outlet.upper()}. (HTTP {resp.status})",
+                ephemeral=True
+            )
+            return
+        text = await resp.text()
 
     root = ET.fromstring(text)
     items = root.findall(".//item")[:5]
 
     headlines = []
     embed = Embed(title=f"📰 Top Headlines from {outlet.upper()}")
-    for item in items:
-        title = item.find("title").text
+    for item in items[:5]:
+        title = item.findtext("title", default="(No title)")
         if title:
             headlines.append(title)
-        link = item.find("link").text
+        if len(title) > 256:
+            title = title[:253] + "..."
+        link = item.findtext("link", default="#")
         embed.add_field(name=title, value=f"[Read more]({link})", inline=False)
 
     if not headlines:
@@ -63,6 +72,8 @@ async def news(interaction: Interaction, outlet: str):
         summary = summary[:1021] + "..."
 
     embed.add_field(name="📝 Summary", value=summary, inline=False)
+    embed.set_author(name=outlet.upper(), icon_url=NEWS_ICONS.get(outlet, None))
+    embed.timestamp = datetime.now(timezone.utc)
     
     await interaction.response.send_message(embed=embed)
 
