@@ -4,8 +4,8 @@ from src.aclient import client
 from src.personalities import personalities
 from utils.kobaldcpp_util import get_kobold_response
 
-@client.tree.command(name="matchmaker", description="Matchmaking for two users")
-async def matchmaker(interaction: Interaction, user1: Member, user2: Member):
+@client.tree.command(name="compatibility", description="Check the compatibility between two users")
+async def compatibility(interaction: Interaction, user1: Member, user2: Member):
     await interaction.response.defer()
 
     if user1.id == user2.id:
@@ -31,7 +31,7 @@ async def matchmaker(interaction: Interaction, user1: Member, user2: Member):
     try:
         summary = await get_kobold_response(messages)
     except Exception as e:
-        print(f"[Matchmaker Error] {e}")
+        print(f"[Compatibility Error] {e}")
         if compatibility < 50:
             summary = f"{user1.display_name} and {user2.display_name} don’t seem to vibe well."
         elif compatibility < 75:
@@ -46,8 +46,8 @@ async def matchmaker(interaction: Interaction, user1: Member, user2: Member):
     else:
         emoji = "❤️"
         
-    embed = Embed(title="💘 Matchmaker 💘", color=Color.pink(), description="Evaluating the compatibility of two users...")
-    embed.add_field(name="Users:", value=f"<@{user1.id}> & <@{user2.id}>", inline=True)
+    embed = Embed(title="💌 Compatibility Check 💌", color=Color.pink(), description="Evaluating the compatibility of two users...")
+    embed.add_field(name="Users:", value=f"<@{user1.id}> • <@{user2.id}>", inline=True)
     embed.add_field(name="Compatibility Percentage:", value=f"{compatibility}% {emoji}", inline=True)
     embed.add_field(name="Summary", value=summary, inline=False)
 
