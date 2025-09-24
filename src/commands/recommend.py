@@ -14,7 +14,6 @@ async def type_autocomplete(
         if current.lower() in opt.lower()
     ]
 
-# TODO: Fix character length exception
 @client.tree.command(name="recommend", description="Get a song or movie recommendation based on mood, genre, and rating")
 @app_commands.describe(
     type="Choose whether you want a song or movie",
@@ -35,7 +34,6 @@ async def recommend(interaction: Interaction, type: str, mood: str, genre: str =
         results = 1
     elif results > 5:
         results = 5
-
 
     genre_text = "any genre (wildcard)" if genre.lower() == "any" else genre
     rating_text = "any rating" if rating.lower() == "any" else rating
@@ -64,7 +62,5 @@ async def recommend(interaction: Interaction, type: str, mood: str, genre: str =
         recommendation = await get_kobold_response(messages)
     except Exception:
         recommendation = "I couldn't think of any right now."
-
-
 
     await interaction.followup.send(recommendation)

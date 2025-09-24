@@ -8,7 +8,7 @@ from utils.kobaldcpp_util import get_kobold_response
 from utils.openai_util import get_openai_response
 from utils.content_filter import censor_curse_words, filter_controversial
 from src.moderation.yappers import init_db, increment_yap, queue_increment
-from src.commands import user, yaps, images, mystical, news, recommend
+from src.commands import user, yaps, images, mystical, news, recommend, relationship
 
 # Setup OpenAI api for conversation feature
 openai.api_key = client.openAI_API_key
