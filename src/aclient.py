@@ -9,6 +9,7 @@ load_dotenv()  # take environment variables from .env.
 class aclient(discord.Client):
     def __init__(self) -> None:
         intents = discord.Intents.default()
+        intents.members = True
         intents.message_content = True
         super().__init__(intents = intents)
         self.tree = app_commands.CommandTree(self)
