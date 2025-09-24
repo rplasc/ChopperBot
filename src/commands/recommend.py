@@ -47,17 +47,16 @@ async def recommend(interaction: Interaction, type: str, mood: str, genre: str =
         f"Each recommendation should include a title and a short description of why it fits."
     )
 
-    if client.is_custom_personality == False:
-        messages = [
-            {"role": "system", "content": personalities[client.current_personality]}, 
-            {"role": "user", "content": prompt}
-        ]
-    else:
-        messages = [
-            {"role": "system", "content": client.current_personality}, 
-            {"role": "user", "content": prompt}
-        ]
-
+    system_content = (
+        personalities[client.current_personality]
+        if not client.is_custom_personality
+        else client.current_personality
+    )
+    messages = [
+        {"role": "system", "content": system_content}, 
+        {"role": "user", "content": prompt}
+    ]
+    
     try:
         recommendation = await get_kobold_response(messages)
     except Exception:

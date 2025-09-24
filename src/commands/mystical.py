@@ -37,14 +37,13 @@ async def tarot_spread(interaction: Interaction):
         spread.append({"position": pos, "name": card["name"], "orientation": orientation, "meaning": meaning})
         spread_text += f"{pos}: {card['name']} ({orientation})"
 
-    if client.is_custom_personality == False:
-        messages = [
-            {"role": "system", "content": personalities[client.current_personality]}, 
-            {"role": "user", "content": f"Here is a tarot spread:\n{spread_text}\nPlease interpret how these cards connect as a reading for the querent in a sentence."}
-        ]
-    else:
-        messages = [
-            {"role": "system", "content": client.current_personality}, 
+    system_content = (
+        personalities[client.current_personality]
+        if not client.is_custom_personality
+        else client.current_personality
+    )
+    messages = [
+        {"role": "system", "content": system_content}, 
             {"role": "user", "content": f"Here is a tarot spread:\n{spread_text}\nPlease interpret how these cards connect as a reading for the querent in a sentence."}
         ]
 
@@ -72,15 +71,14 @@ async def cast(interaction: Interaction, target: Member):
 async def crystal_ball(interaction: Interaction, question: str):
     await interaction.response.defer(thinking=True)
 
-    if client.is_custom_personality == False:
-        messages = [
-            {"role": "system", "content": personalities[client.current_personality]}, 
-            {"role": "user", "content": f"Here is a question:\n{question}\nPlease give a vague response."}
-        ]
-    else:
-        messages = [
-            {"role": "system", "content": client.current_personality}, 
-            {"role": "user", "content": f"Here is a question:\n{question}\nPlease give a short and vague yes, no, or maybe response."}
+    system_content = (
+        personalities[client.current_personality]
+        if not client.is_custom_personality
+        else client.current_personality
+    )
+    messages = [
+        {"role": "system", "content": system_content}, 
+        {"role": "user", "content": f"Here is a question:\n{question}\nPlease give a vague response."}
         ]
 
     try:

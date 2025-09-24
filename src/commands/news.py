@@ -44,17 +44,16 @@ async def news(interaction: Interaction, outlet: str):
         + "\n\nPlease provide a short (2–3 sentence) overall summary of these headlines."
     )
 
-    if client.is_custom_personality == False:
-        messages = [
-            {"role": "system", "content": personalities[client.current_personality]},
-            {"role": "user", "content": summary_prompt}
+    system_content = (
+        personalities[client.current_personality]
+        if not client.is_custom_personality
+        else client.current_personality
+    )
+    messages = [
+        {"role": "system", "content": system_content}, 
+        {"role": "user", "content": summary_prompt}
         ]
-    else:
-        messages = [
-            {"role": "system", "content": client.current_personality},
-            {"role": "user", "content": summary_prompt}
-        ]
-
+    
     try:
         summary = await get_kobold_response(messages)
     except Exception:

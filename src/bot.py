@@ -53,14 +53,14 @@ async def on_message(message):
 
     # Uses KoboldCPP API to generate messages
     if client.user.mentioned_in(message):
-        if client.is_custom_personality == False:
-            messages = [
-                {"role": "system", "content": personalities[client.current_personality]},
-             ] + conversation_histories[server_id][channel_id]
-        else:
-            messages = [
-                {"role": "system", "content": client.current_personality},
-            ] + conversation_histories[server_id][channel_id]
+        system_content = (
+            personalities[client.current_personality]
+            if not client.is_custom_personality
+            else client.current_personality
+        )
+        messages = [
+            {"role": "system", "content": system_content}, 
+                ] + conversation_histories[server_id][channel_id]
         try:
             client_response = await get_kobold_response(messages)
             conversation_histories[server_id][channel_id].append({"role": "assistant", "content": client_response})
