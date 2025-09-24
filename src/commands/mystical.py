@@ -61,26 +61,6 @@ async def tarot_spread(interaction: Interaction):
 
     await interaction.followup.send(embed=embed)
 
-# TODO: Current api is down (permanently?)
-# @client.tree.command(name="horoscope", description="Get your daily horoscope")
-# async def horoscope(interaction: Interaction, sign: str):
-#     await interaction.response.defer(thinking=True)
-
-#     sign = sign.lower()
-#     if sign not in ZODIAC_SIGNS:
-#         await interaction.response.send_message("Please enter a valid zodiac sign.", ephemeral=True)
-#         return
-    
-#     data = await get_horoscope(sign)
-
-#     embed = Embed(title=f"✨ Horoscope for {sign.title()} ✨", description=data["description"])
-#     embed.add_field(name="Mood", value=data["mood"])
-#     embed.add_field(name="Lucky Number", value=data["lucky_number"])
-#     embed.add_field(name="Lucky Color", value=data["color"])
-#     embed.set_footer(text=f"Compatibility: {data['compatibility']} | Lucky Time: {data['lucky_time']}")
-
-#     await interaction.followup.send(embed=embed)
-
 @client.tree.command(name="cast", description="Cast a random spell on someone.")
 async def cast(interaction: Interaction, target: Member):
     user_id  = interaction.user.id
