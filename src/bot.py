@@ -62,10 +62,14 @@ async def on_message(message):
             {"role": "system", "content": system_content}, 
                 ] + conversation_histories[server_id][channel_id]
         try:
-            client_response = await get_kobold_response(messages)
+            async with message.channel.typing():
+                client_response = await get_kobold_response(messages)
+
             conversation_histories[server_id][channel_id].append({"role": "assistant", "content": client_response})
             await message.channel.send(client_response)
-        except:
+            
+        except Exception as e:
+            print(f"[Error] {e}")
             await message.channel.send('I am currently sleeping.')
     
 @client.tree.command(name= "help",description="List of all commands")
