@@ -1,4 +1,4 @@
-from discord import Interaction, Embed
+from discord import Interaction, Embed, Color
 from src.aclient import client
 from src.moderation.yappers import show_yaps_user, show_yaps_leaderboard
 @client.tree.command(name="yaps", description="Shows number of messages you have sent")
@@ -16,11 +16,19 @@ async def yappers(interaction: Interaction):
     server_id = str(interaction.guild.id)
     top_users = await show_yaps_leaderboard(server_id)
     
-    embed = Embed(title=f"Top {len(top_users)}", description='In Decreasing Order:')
+    embed = Embed(title=f"Top {len(top_users)}", description='In Decreasing Order:', color=Color.gold())
     
-    for i, (user_id, yaps) in enumerate(top_users, start=1):
+    for i,  (user_id, yaps) in enumerate(top_users, start=1):
         user = await client.fetch_user(int(user_id))
         if user is not None and not user.bot:
-            embed.add_field(name=f'#{i}', value=f'{user.name} {yaps}', inline=False)
-                
+            if i == 1:
+                label = "🥇"
+            elif i == 2:
+                label = "🥈"
+            elif i == 3:
+                label = "🥉"
+            else:
+                label = f"**#{i}**"
+            embed.add_field(name="\u200b", value=f'{label} {user.name}    {yaps}', inline=False)
+
     await interaction.response.send_message(embed=embed)
