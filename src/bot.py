@@ -8,8 +8,8 @@ from utils.kobaldcpp_util import get_kobold_response
 from utils.history_util import trim_history
 from utils.openai_util import get_openai_response
 from utils.content_filter import censor_curse_words, filter_controversial
-from src.moderation.yappers import init_db, increment_yap, queue_increment
-from src.commands import yaps, mystical, news, recommend, relationship
+from src.moderation.database import init_db, increment_yap, queue_increment, flush_user_logs_periodically, queue_user_log, maybe_update_personality_notes
+from src.commands import user, mystical, news, recommend, relationship
 
 # Setup OpenAI api for conversation feature
 openai.api_key = client.openAI_API_key
@@ -23,6 +23,7 @@ async def on_ready():
     await init_db()
     await client.tree.sync()
     client.loop.create_task(increment_yap())
+    client.loop.create_task(flush_user_logs_periodically())
     print(f'Logged in as {client.user.name}')
 
 @client.event
@@ -69,6 +70,9 @@ async def on_message(message):
     # Increment yap stats
     await queue_increment(server_id, user_id)
 
+    # Queue user log update
+    await queue_user_log(user_id, user_name)
+
     # Initialize nested history structure:
     # { personality -> server -> channel -> user -> [messages] }
     personality = getattr(client, "current_personality", "Chopperbot")
@@ -104,6 +108,9 @@ async def on_message(message):
             conversation_histories[personality][server_id][channel_id][user_id] = history
 
             await message.reply(client_response, mention_author=False)
+            
+            # Check if personality notes are available
+            await maybe_update_personality_notes(user_id, user_name, history)
 
         except Exception as e:
             print(f"[Error] {e}")
@@ -139,7 +146,7 @@ async def ask(interaction: Interaction, prompt: str):
         ask_conversation_histories[user_id] = trim_history(ask_conversation_histories[user_id], max_tokens=1500)
 
     except Exception as e:
-        print(f"[ASk Error] {e}")
+        print(f"[Ask Error] {e}")
         client_response = "I am currently unavailable."
     await interaction.followup.send(client_response, ephemeral=True)
 

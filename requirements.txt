@@ -4,3 +4,4 @@ discord-py-slash-command==4.2.1
 python-dotenv
 openai==0.28.1
 typing_extensions==4.8.0
+tiktoken==0.11.0
