@@ -3,7 +3,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from discord import Interaction, Embed, app_commands
 from src.aclient import client
-from src.personalities import personalities
+from src.personalities import get_system_content
 from utils.news_sources import NEWS_SOURCES, NEWS_ICONS
 from utils.kobaldcpp_util import get_kobold_response
 
@@ -53,11 +53,7 @@ async def news(interaction: Interaction, outlet: str):
         + "\n\nPlease provide a short (2–3 sentence) overall summary of these headlines."
     )
 
-    system_content = (
-        personalities[client.current_personality]
-        if not client.is_custom_personality
-        else client.current_personality
-    )
+    system_content = get_system_content()
     messages = [
         {"role": "system", "content": system_content}, 
         {"role": "user", "content": summary_prompt}

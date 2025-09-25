@@ -2,13 +2,14 @@ import os
 from typing import List
 import openai
 from discord import DMChannel, Interaction, Embed, app_commands
+from commands import utiliti
 from src.aclient import client
-from src.personalities import personalities, custom_personalities
+from src.personalities import personalities, custom_personalities, get_system_content
 from utils.kobaldcpp_util import get_kobold_response
 from utils.openai_util import get_openai_response
 from utils.content_filter import censor_curse_words, filter_controversial
 from src.moderation.yappers import init_db, increment_yap, queue_increment
-from src.commands import user, yaps, images, mystical, news, recommend, relationship
+from src.commands import yaps, mystical, news, recommend, relationship
 
 # Setup OpenAI api for conversation feature
 openai.api_key = client.openAI_API_key
@@ -53,11 +54,7 @@ async def on_message(message):
 
     # Uses KoboldCPP API to generate messages
     if client.user.mentioned_in(message):
-        system_content = (
-            personalities[client.current_personality]
-            if not client.is_custom_personality
-            else client.current_personality
-        )
+        system_content = get_system_content()
         messages = [
             {"role": "system", "content": system_content}, 
                 ] + conversation_histories[server_id][channel_id]
@@ -95,13 +92,9 @@ async def whisper(interaction: Interaction, prompt: str):
     # Limit the conversation history to 5 messages for each user
     whispers_conversation_histories[user_id].append({"role": "user", "content": user_message_content})
     whispers_conversation_histories[user_id] = whispers_conversation_histories[user_id][-5:]
-
-    messages = [
-        {"role": "system", "content": client.current_personality},
-    ] + whispers_conversation_histories[user_id]
     
     try:
-        client_response = await get_openai_response(messages)
+        client_response = await get_openai_response(whispers_conversation_histories[user_id])
         whispers_conversation_histories[user_id].append({"role": "assistant", "content": client_response})
     except:
         client_response = "I am currently unavailable."

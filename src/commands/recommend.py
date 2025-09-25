@@ -1,6 +1,6 @@
 from discord import Interaction, Embed, app_commands
 from src.aclient import client
-from src.personalities import personalities
+from src.personalities import get_system_content
 from utils.kobaldcpp_util import get_kobold_response
 
 async def type_autocomplete(
@@ -47,11 +47,8 @@ async def recommend(interaction: Interaction, type: str, mood: str, genre: str =
         f"Each recommendation should include a title and a short description of why it fits."
     )
 
-    system_content = (
-        personalities[client.current_personality]
-        if not client.is_custom_personality
-        else client.current_personality
-    )
+    system_content = get_system_content()
+
     messages = [
         {"role": "system", "content": system_content}, 
         {"role": "user", "content": prompt}

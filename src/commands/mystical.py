@@ -4,8 +4,8 @@ from src.aclient import client
 from utils.tarot_data import TAROT_CARDS
 from utils.kobaldcpp_util import get_kobold_response
 from utils.spellbook import SPELLS
-from src.personalities import personalities
-from utils.horoscope import ZODIAC_SIGNS, get_horoscope
+from src.personalities import get_system_content
+# from utils.horoscope import ZODIAC_SIGNS, get_horoscope
 
 @client.tree.command(name="tarot", description="Draw a tarot card for a reading.")
 async def tarot(interaction: Interaction):
@@ -37,11 +37,8 @@ async def tarot_spread(interaction: Interaction):
         spread.append({"position": pos, "name": card["name"], "orientation": orientation, "meaning": meaning})
         spread_text += f"{pos}: {card['name']} ({orientation})"
 
-    system_content = (
-        personalities[client.current_personality]
-        if not client.is_custom_personality
-        else client.current_personality
-    )
+    system_content = get_system_content()
+
     messages = [
         {"role": "system", "content": system_content}, 
             {"role": "user", "content": f"Here is a tarot spread:\n{spread_text}\nPlease interpret how these cards connect as a reading for the querent in a sentence."}
@@ -71,11 +68,7 @@ async def cast(interaction: Interaction, target: Member):
 async def crystal_ball(interaction: Interaction, question: str):
     await interaction.response.defer(thinking=True)
 
-    system_content = (
-        personalities[client.current_personality]
-        if not client.is_custom_personality
-        else client.current_personality
-    )
+    system_content = get_system_content()
     messages = [
         {"role": "system", "content": system_content}, 
         {"role": "user", "content": f"Here is a question:\n{question}\nPlease give a vague response."}
