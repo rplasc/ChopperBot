@@ -1,5 +1,5 @@
 import random
-from discord import Interaction, Embed, Member
+from discord import Interaction, Embed, Member, Color
 from src.aclient import client
 from utils.tarot_data import TAROT_CARDS
 from utils.kobaldcpp_util import get_kobold_response
@@ -17,7 +17,8 @@ async def tarot(interaction: Interaction):
 
     embed = Embed(
         title=f"🔮 You drew: {card['name']} ({orientation})",
-        description=meaning
+        description=meaning,
+        color=Color.blurple()
     )
     await interaction.response.send_message(embed=embed)
 
@@ -41,7 +42,7 @@ async def tarot_spread(interaction: Interaction):
 
     messages = [
         {"role": "system", "content": system_content}, 
-            {"role": "user", "content": f"Here is a tarot spread:\n{spread_text}\nPlease interpret how these cards connect as a reading for the querent in a sentence."}
+        {"role": "user", "content": f"Here is a tarot spread:\n{spread_text}\nPlease interpret how these cards connect as a reading for the querent in a sentence."}
         ]
 
     try:
@@ -49,7 +50,7 @@ async def tarot_spread(interaction: Interaction):
     except Exception:
         interpretation = "The cards suggest change, growth, and reflection."
 
-    embed = Embed(title="✨ Three-Card Tarot Reading ✨")
+    embed = Embed(title="✨ Three-Card Tarot Reading ✨", color=Color.blurple())
     for card in spread:
         embed.add_field(name=f"{card['position']}: {card['name']} ({card['orientation']})",
                         value=card["meaning"], inline=False)
@@ -79,7 +80,7 @@ async def crystal_ball(interaction: Interaction, question: str):
     except Exception:
         response = "The future is too foggy at the moment."
 
-    embed = Embed()
+    embed = Embed(color=Color.purple())
     embed.add_field(name="Your Question", value=question, inline=False)
     embed.add_field(name="🔮 Crystal Ball", value=response, inline=False)
 

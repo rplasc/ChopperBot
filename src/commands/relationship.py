@@ -36,14 +36,19 @@ async def compatibility(interaction: Interaction, user1: Member, user2: Member):
         else:
             summary = f"{user1.display_name} and {user2.display_name} are a strong pair — sparks might fly!"
 
+    # Default embed color
+    message_color = Color.pink()
+
     if compatibility < 50:
         emoji = "💔"
+        message_color = Color.red()
     elif compatibility < 75:
         emoji = "💛"
+        message_color = Color.green()
     else:
         emoji = "❤️"
         
-    embed = Embed(title="💌 Compatibility Check 💌", color=Color.pink(), description="Evaluating the compatibility of two users...")
+    embed = Embed(title="💌 Compatibility Check 💌", description="Evaluating the compatibility of two users...", color=message_color)
     embed.add_field(name="Users:", value=f"<@{user1.id}> • <@{user2.id}>", inline=True)
     embed.add_field(name="Compatibility Percentage:", value=f"{compatibility}% {emoji}", inline=True)
     embed.add_field(name="Summary", value=summary, inline=False)
@@ -93,7 +98,7 @@ async def matchmaker(interaction: Interaction, user: Member):
             summary = f"{user.display_name} and {match.display_name} are a perfect match — sparks will fly!"
 
     # Build embed
-    embed = Embed(title="💕 Matchmaker 💕", color=Color.pink(), description="A new match has been made!")
+    embed = Embed(title="💕 Matchmaker 💕", description="A new match has been made!", color=Color.pink())
     embed.add_field(name="Users:", value=f"<@{user.id}> 💞 <@{match.id}>", inline=True)
     embed.add_field(name="Match Rating:", value=f"{stars} ({rating}/5)", inline=True)
     embed.add_field(name="Summary", value=summary, inline=False)
