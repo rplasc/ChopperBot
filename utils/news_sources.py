@@ -4,6 +4,7 @@ NEWS_SOURCES = {
     "nytimes": "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
     "reuters": "http://feeds.reuters.com/reuters/topNews",
     "aljazeera": "https://www.aljazeera.com/xml/rss/all.xml",
+    "espn": "https://www.espn.com/espn/rss/news"
 }
 
 NEWS_ICONS = {
@@ -11,5 +12,6 @@ NEWS_ICONS = {
     "cnn": "https://upload.wikimedia.org/wikipedia/commons/b/b1/CNN.svg",
     "reuters": "https://upload.wikimedia.org/wikipedia/commons/5/59/Reuters_Logo.svg",
     "nytimes": "https://upload.wikimedia.org/wikipedia/commons/4/40/New_York_Times_logo_variation.jpg",
-    "aljazeera": "https://network.aljazeera.net/sites/aj_corporate/themes/custom/aj_corporate_theme/logo.svg"
+    "aljazeera": "https://network.aljazeera.net/sites/aj_corporate/themes/custom/aj_corporate_theme/logo.svg",
+    "espn": "https://upload.wikimedia.org/wikipedia/commons/2/2f/ESPN_wordmark.svg"
 }
