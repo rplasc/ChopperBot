@@ -9,6 +9,7 @@ from utils.kobaldcpp_util import get_kobold_response
 
 @client.tree.command(name="news", description="Get the latest headlines from a news outlet")
 async def news(interaction: Interaction, outlet: str):
+    await interaction.response.defer()
     outlet = outlet.lower()
     if outlet not in NEWS_SOURCES:
         valid_sources = ", ".join(NEWS_SOURCES.keys())
@@ -71,7 +72,7 @@ async def news(interaction: Interaction, outlet: str):
     embed.set_author(name=outlet.upper(), icon_url=NEWS_ICONS.get(outlet, None))
     embed.timestamp = datetime.now(timezone.utc)
     
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @news.autocomplete("outlet")
 async def news_autocomplete(interaction: Interaction, current: str):
