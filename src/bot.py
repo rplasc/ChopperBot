@@ -2,10 +2,10 @@ import os
 from typing import List
 import openai
 from discord import DMChannel, Interaction, Embed, app_commands
-from commands import utiliti
 from src.aclient import client
 from src.personalities import personalities, custom_personalities, get_system_content
 from utils.kobaldcpp_util import get_kobold_response
+from utils.history_util import trim_history
 from utils.openai_util import get_openai_response
 from utils.content_filter import censor_curse_words, filter_controversial
 from src.moderation.yappers import init_db, increment_yap, queue_increment
@@ -16,8 +16,7 @@ openai.api_key = client.openAI_API_key
 
 # Maintain a dynamic conversation history
 conversation_histories = {}
-MAX_HISTORY_LENGTH = 20
-whispers_conversation_histories = {}
+ask_conversation_histories = {}
 
 @client.event
 async def on_ready():
@@ -31,43 +30,84 @@ async def on_message(message):
     if message.author == client.user:
         return
     
-    #TODO: Add DM channel interaction
-    if isinstance (message.channel, DMChannel):
-        await message.channel.send("Chopperbot is not available here.")
+    if isinstance(message.channel, DMChannel):
+        user_id = str(message.author.id)
+        personality = getattr(client, "current_personality", "Chopperbot")
+
+        if personality not in conversation_histories:
+            conversation_histories[personality] = {}
+        if "dm" not in conversation_histories[personality]:
+            conversation_histories[personality]["dm"] = {}
+        if user_id not in conversation_histories[personality]["dm"]:
+            conversation_histories[personality]["dm"][user_id] = []
+
+        history = conversation_histories[personality]["dm"][user_id]
+        history.append({"role": "user", "name": message.author.name, "content": message.content})
+        history = trim_history(history, max_tokens=2000)
+        conversation_histories[personality]["dm"][user_id] = history
+
+        system_content = get_system_content()
+        messages = [{"role": "system", "content": system_content}] + history
+
+        try:
+            async with message.channel.typing():
+                client_response = await get_kobold_response(messages)
+            history.append({"role": "assistant", "content": client_response})
+            conversation_histories[personality]["dm"][user_id] = history
+            await message.reply(client_response)
+        except Exception as e:
+            print(f"[DM Error] {e}")
+            await message.channel.send("I’m currently offline. Try again later.")
         return
 
     server_id = str(message.guild.id)
+    channel_id = str(message.channel.id)
     user_id = str(message.author.id)
+    user_name = message.author.name
+    user_message_content = message.content
+
+    # Increment yap stats
     await queue_increment(server_id, user_id)
 
-    channel_id = message.channel.id
-    user_message_content = message.content
-    
-    if server_id not in conversation_histories:
-        conversation_histories[server_id] = {}
-    if channel_id not in conversation_histories[server_id]:
-        conversation_histories[server_id][channel_id] = []
-        
-    user_info = f"{message.author.id} ({message.author.name})"
-    conversation_histories[server_id][channel_id].append({"role": "user", "content": f"{user_info}: {user_message_content}"})
-    conversation_histories[server_id][channel_id] = conversation_histories[server_id][channel_id][-MAX_HISTORY_LENGTH:]
+    # Initialize nested history structure:
+    # { personality -> server -> channel -> user -> [messages] }
+    personality = getattr(client, "current_personality", "Chopperbot")
+    if personality not in conversation_histories:
+        conversation_histories[personality] = {}
+    if server_id not in conversation_histories[personality]:
+        conversation_histories[personality][server_id] = {}
+    if channel_id not in conversation_histories[personality][server_id]:
+        conversation_histories[personality][server_id][channel_id] = {}
+    if user_id not in conversation_histories[personality][server_id][channel_id]:
+        conversation_histories[personality][server_id][channel_id][user_id] = []
 
-    # Uses KoboldCPP API to generate messages
+    history = conversation_histories[personality][server_id][channel_id][user_id]
+
+    # Add user message to history
+    history.append({"role": "user", "name": user_name, "content": user_message_content})
+
+    # Trim history (token based)
+    history = trim_history(history, max_tokens=2000)
+    conversation_histories[personality][server_id][channel_id][user_id] = history
+
+    # Only respond when bot is mentioned
     if client.user.mentioned_in(message):
         system_content = get_system_content()
-        messages = [
-            {"role": "system", "content": system_content}, 
-                ] + conversation_histories[server_id][channel_id]
+        messages = [{"role": "system", "content": system_content}] + history
+
         try:
             async with message.channel.typing():
                 client_response = await get_kobold_response(messages)
 
-            conversation_histories[server_id][channel_id].append({"role": "assistant", "content": client_response})
-            await message.channel.send(client_response)
-            
+            # Save assistant response
+            history.append({"role": "assistant", "content": client_response})
+            conversation_histories[personality][server_id][channel_id][user_id] = history
+
+            await message.reply(client_response, mention_author=False)
+
         except Exception as e:
             print(f"[Error] {e}")
-            await message.channel.send('I am currently sleeping.')
+            await message.reply("Chopperbot is currently sleeping.")
     
 @client.tree.command(name= "help",description="List of all commands")
 async def help(interaction: Interaction):
@@ -79,24 +119,27 @@ async def help(interaction: Interaction):
     
 # Allows ChatGPT conversations
 @client.tree.command(name="ask",description="Ask and recieve response quietly from ChatGPT.")
-async def whisper(interaction: Interaction, prompt: str):
+async def ask(interaction: Interaction, prompt: str):
     await interaction.response.defer(ephemeral=True, thinking=True)
     user_message_content = censor_curse_words(prompt)
     
     user_id = str(interaction.user.id)
     
     # Initialize conversation history for the user if it doesn't exist
-    if user_id not in whispers_conversation_histories:
-        whispers_conversation_histories[user_id] = []
+    if user_id not in ask_conversation_histories:
+        ask_conversation_histories[user_id] = []
     
     # Limit the conversation history to 5 messages for each user
-    whispers_conversation_histories[user_id].append({"role": "user", "content": user_message_content})
-    whispers_conversation_histories[user_id] = whispers_conversation_histories[user_id][-5:]
+    ask_conversation_histories[user_id].append({"role": "user", "content": user_message_content})
+    ask_conversation_histories[user_id] = trim_history(ask_conversation_histories[user_id], max_tokens=1500)
     
     try:
-        client_response = await get_openai_response(whispers_conversation_histories[user_id])
-        whispers_conversation_histories[user_id].append({"role": "assistant", "content": client_response})
-    except:
+        client_response = await get_openai_response(ask_conversation_histories[user_id])
+        ask_conversation_histories[user_id].append({"role": "assistant", "content": client_response})
+        ask_conversation_histories[user_id] = trim_history(ask_conversation_histories[user_id], max_tokens=1500)
+
+    except Exception as e:
+        print(f"[ASk Error] {e}")
         client_response = "I am currently unavailable."
     await interaction.followup.send(client_response, ephemeral=True)
 
@@ -112,10 +155,14 @@ async def set_personality(interaction: Interaction, personality: str):
     else:
         embed = Embed(title="Set Personality", description=f'Invalid personality. Available options are: {", ".join(personalities.keys())}')
         await interaction.followup.send(embed=embed)
-        
-async def personality_autocomplete(interaction: Interaction, current: str) -> List[app_commands.Choice[str]]:
-    choices = [app_commands.Choice(name=personality, value=personality) for personality in personalities.keys() if current.lower() in personality.lower()]
-    return choices
+
+@set_personality.autocomplete("personality")
+async def personality_autocomplete(interaction: Interaction, current: str):
+    return [
+        app_commands.Choice(name=personality, value=personality)
+        for personality in personalities.keys()
+        if current.lower() in personality.lower()
+    ]
     
 @client.tree.command(name="pretend", description="Set the bot's personality to a character/celebrity")
 async def pretend(interaction: Interaction, personality: str):
