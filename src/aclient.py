@@ -22,6 +22,9 @@ class aclient(discord.Client):
         # ChatGPT integration
         self.openAI_API_key = os.getenv('OPENAI_API_KEY')
         self.openAI_gpt_engine = os.getenv('GPT_ENGINE')
+
+        # Other API integrations
+        self.weatherAPI = os.getenv('WEATHER_API_KEY')
         
     
 client = aclient()

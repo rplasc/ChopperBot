@@ -9,7 +9,7 @@ from utils.history_util import trim_history
 from utils.openai_util import get_openai_response
 from utils.content_filter import censor_curse_words, filter_controversial
 from src.moderation.database import init_db, increment_yap, queue_increment, flush_user_logs_periodically, queue_user_log, maybe_update_personality_notes
-from src.commands import user, mystical, news, recommend, relationship
+from src.commands import user, mystical, news, recommend, relationship, weather
 
 # Setup OpenAI api for conversation feature
 openai.api_key = client.openAI_API_key
