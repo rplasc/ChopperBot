@@ -8,8 +8,10 @@ from utils.kobaldcpp_util import get_kobold_response
 from utils.history_util import trim_history
 from utils.openai_util import get_openai_response
 from utils.content_filter import censor_curse_words, filter_controversial
-from src.moderation.database import init_db, increment_yap, queue_increment, flush_user_logs_periodically, queue_user_log, maybe_update_personality_notes
-from src.commands import user, mystical, news, recommend, relationship, weather
+from src.moderation.database import (init_db, increment_yap, queue_increment, flush_user_logs_periodically,
+                                    queue_user_log, maybe_queue_notes_update, get_user_interactions,
+                                    interaction_cache, load_interaction_cache, get_personality_context)
+from src.commands import user, mystical, news, recommend, relationship, weather, miscellaneous
 
 # Setup OpenAI api for conversation feature
 openai.api_key = client.openAI_API_key
@@ -22,6 +24,7 @@ ask_conversation_histories = {}
 async def on_ready():
     await init_db()
     await client.tree.sync()
+    await load_interaction_cache()
     client.loop.create_task(increment_yap())
     client.loop.create_task(flush_user_logs_periodically())
     print(f'Logged in as {client.user.name}')
@@ -67,12 +70,6 @@ async def on_message(message):
     user_name = message.author.name
     user_message_content = message.content
 
-    # Increment yap stats
-    await queue_increment(server_id, user_id)
-
-    # Queue user log update
-    await queue_user_log(user_id, user_name)
-
     # Initialize nested history structure:
     # { personality -> server -> channel -> user -> [messages] }
     personality = getattr(client, "current_personality", "Chopperbot")
@@ -97,7 +94,13 @@ async def on_message(message):
     # Only respond when bot is mentioned
     if client.user.mentioned_in(message):
         system_content = get_system_content()
-        messages = [{"role": "system", "content": system_content}] + history
+        messages = [{"role": "system", "content": system_content}]
+
+        notes_context = await get_personality_context(user_id, user_name)
+        if notes_context:
+            messages += [{"role": "system", "content": notes_context}]
+        
+        messages += history
 
         try:
             async with message.channel.typing():
@@ -108,13 +111,27 @@ async def on_message(message):
             conversation_histories[personality][server_id][channel_id][user_id] = history
 
             await message.reply(client_response, mention_author=False)
-            
-            # Check if personality notes are available
-            await maybe_update_personality_notes(user_id, user_name, history)
 
         except Exception as e:
             print(f"[Error] {e}")
             await message.reply("Chopperbot is currently sleeping.")
+    
+    # Increment yap stats
+    await queue_increment(server_id, user_id)
+
+    # increment interaction count in memory
+    interaction_cache[user_id] = interaction_cache.get(user_id, 0) + 1
+
+    # Queue user log update
+    await queue_user_log(user_id, user_name)
+
+    # fetch interaction count fresh from DB
+    interactions = await get_user_interactions(user_id)
+
+    # Maybe update personality notes
+    history = conversation_histories.get(user_id, [])
+    await maybe_queue_notes_update(user_id, user_name, history, interactions)
+
     
 @client.tree.command(name= "help",description="List of all commands")
 async def help(interaction: Interaction):

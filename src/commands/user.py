@@ -1,7 +1,7 @@
 from discord import Interaction, Embed, Color, Member
 from datetime import datetime, timezone
 from src.aclient import client
-from src.moderation.database import show_yaps_user, show_yaps_leaderboard, get_user_log
+from src.moderation.database import show_server_interactions_user, show_server_interactions_leaderboard, get_user_log
 from utils.kobaldcpp_util import get_kobold_response
 from src.personalities import get_system_content
 
@@ -48,14 +48,14 @@ async def yaps(interaction: Interaction):
     server_id = str(interaction.guild.id)
     user_id = str(interaction.user.id)
     
-    yaps = await show_yaps_user(server_id, user_id)
+    yaps = await show_server_interactions_user(server_id, user_id)
     
     await interaction.response.send_message(f'You have sent {yaps} messages so far.')
     
 @client.tree.command(name='leaderboard', description='Shows top 10 yappers in the server')
 async def yappers(interaction: Interaction):
     server_id = str(interaction.guild.id)
-    top_users = await show_yaps_leaderboard(server_id)
+    top_users = await show_server_interactions_leaderboard(server_id)
     
     embed = Embed(title=f"Top {len(top_users)}", description='In Decreasing Order:', color=Color.gold())
     
