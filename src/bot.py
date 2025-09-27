@@ -20,6 +20,7 @@ openai.api_key = client.openAI_API_key
 # Maintain a dynamic conversation history
 conversation_histories = {}
 ask_conversation_histories = {}
+user_only_histories = {}
 
 @client.event
 async def on_ready():
@@ -86,6 +87,21 @@ async def on_message(message):
         conversation_histories[personality][server_id][channel_id] = {}
     if user_id not in conversation_histories[personality][server_id][channel_id]:
         conversation_histories[personality][server_id][channel_id][user_id] = []
+    
+    if personality not in user_only_histories:
+        user_only_histories[personality] = {}
+    if server_id not in user_only_histories[personality]:
+        user_only_histories[personality][server_id] = {}
+    if channel_id not in user_only_histories[personality][server_id]:
+        user_only_histories[personality][server_id][channel_id] = {}
+    if user_id not in user_only_histories[personality][server_id][channel_id]:
+        user_only_histories[personality][server_id][channel_id][user_id] = []
+
+    if message.author != client.user:
+        user_only_histories[personality][server_id][channel_id][user_id].append({
+            "role": "user",
+            "content": user_message_content
+        })
 
     history = conversation_histories[personality][server_id][channel_id][user_id]
 
@@ -134,9 +150,8 @@ async def on_message(message):
     interactions = await get_user_interactions(user_id)
 
     # Maybe update personality notes
-    raw_history = conversation_histories[personality][server_id][channel_id][user_id]
-    user_only_history = [h for h in raw_history if h["role"] == "user"]
-    await maybe_queue_notes_update(user_id, user_name, user_only_history, interactions)
+    user_history = user_only_histories[personality][server_id][channel_id][user_id]
+    await maybe_queue_notes_update(user_id, user_name, user_history, interactions)
 
     await maybe_update_world(str(server_id))
     

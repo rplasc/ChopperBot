@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import re
 from utils.kobaldcpp_util import get_kobold_response
+from utils.memory_util import significant_change
 
 DB_PATH =  "data/bot_data.db"
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -192,6 +193,9 @@ async def maybe_queue_notes_update(user_id: str, username: str, history: list, i
 
                 if cleaned.lower() in ["", "no changes", "none"]:
                     return  # keep old notes unchanged
+                
+                if not significant_change(old_notes, cleaned):
+                    return  # skip if not much new
 
                 await update_personality_notes(user_id, cleaned)
                 print(f"[Notes Updated] {username}: {cleaned}")
@@ -199,7 +203,8 @@ async def maybe_queue_notes_update(user_id: str, username: str, history: list, i
             except Exception as e:
                 print(f"[Notes Update Error] {e}")
         else:
-            await generate_personality_notes(user_id, history)
+            notes = await generate_personality_notes(user_id, history)
+            await update_personality_notes(user_id, notes)
 
 async def get_user_log(user_id: str):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -287,7 +292,6 @@ async def summarize_world_and_update(server_id: str, recent_messages: list):
             return  # no update this round
 
         # Parse key:value pairs safely
-        import re
         for line in response.splitlines():
             match = re.match(r"^\s*([^:]+)\s*:\s*(.+)$", line)
             if match:
