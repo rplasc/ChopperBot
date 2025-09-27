@@ -10,8 +10,9 @@ from utils.openai_util import get_openai_response
 from utils.content_filter import censor_curse_words, filter_controversial
 from src.moderation.database import (init_db, increment_yap, queue_increment, flush_user_logs_periodically,
                                     queue_user_log, maybe_queue_notes_update, get_user_interactions,
-                                    interaction_cache, load_interaction_cache, get_personality_context)
-from src.commands import user, mystical, news, recommend, relationship, weather, miscellaneous
+                                    interaction_cache, load_interaction_cache, get_personality_context,
+                                    build_context, maybe_update_world, add_to_world_history)
+from src.commands import admin, user, mystical, news, recommend, relationship, weather, miscellaneous
 
 # Setup OpenAI api for conversation feature
 openai.api_key = client.openAI_API_key
@@ -36,6 +37,7 @@ async def on_message(message):
     
     if isinstance(message.channel, DMChannel):
         user_id = str(message.author.id)
+        user_name = message.author.name
         personality = getattr(client, "current_personality", "Chopperbot")
 
         if personality not in conversation_histories:
@@ -52,6 +54,9 @@ async def on_message(message):
 
         system_content = get_system_content()
         messages = [{"role": "system", "content": system_content}] + history
+        notes_context = await get_personality_context(user_id, user_name)
+        if notes_context:
+            messages += [{"role": "system", "content": notes_context}]
 
         try:
             async with message.channel.typing():
@@ -86,6 +91,7 @@ async def on_message(message):
 
     # Add user message to history
     history.append({"role": "user", "name": user_name, "content": user_message_content})
+    add_to_world_history(str(server_id), message.author.display_name, user_message_content)
 
     # Trim history (token based)
     history = trim_history(history, max_tokens=2000)
@@ -96,10 +102,9 @@ async def on_message(message):
         system_content = get_system_content()
         messages = [{"role": "system", "content": system_content}]
 
-        notes_context = await get_personality_context(user_id, user_name)
-        if notes_context:
-            messages += [{"role": "system", "content": notes_context}]
-        
+        context_msgs = await build_context(user_id, user_name, str(message.guild.id) if message.guild else None)
+        if context_msgs:
+            messages += context_msgs
         messages += history
 
         try:
@@ -129,9 +134,11 @@ async def on_message(message):
     interactions = await get_user_interactions(user_id)
 
     # Maybe update personality notes
-    history = conversation_histories.get(user_id, [])
-    await maybe_queue_notes_update(user_id, user_name, history, interactions)
+    raw_history = conversation_histories[personality][server_id][channel_id][user_id]
+    user_only_history = [h for h in raw_history if h["role"] == "user"]
+    await maybe_queue_notes_update(user_id, user_name, user_only_history, interactions)
 
+    await maybe_update_world(str(server_id))
     
 @client.tree.command(name= "help",description="List of all commands")
 async def help(interaction: Interaction):
