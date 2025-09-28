@@ -16,7 +16,7 @@ class aclient(discord.Client):
         self.current_channel = None
         self.activity = discord.Activity(type = discord.ActivityType.listening,name='chopperboi')
         self.isPrivate = False
-        self.current_personality = "Chopperbot"
+        self.current_personality = "Default"
         self.is_custom_personality = False
         
         # ChatGPT integration

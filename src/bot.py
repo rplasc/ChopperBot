@@ -77,16 +77,14 @@ async def on_message(message):
     user_message_content = message.content
 
     # Initialize nested history structure:
-    # { personality -> server -> channel -> user -> [messages] }
-    personality = getattr(client, "current_personality", "Chopperbot")
+    # { personality -> server -> channel -> [messages] }
+    personality = getattr(client, "current_personality", "Default")
     if personality not in conversation_histories:
         conversation_histories[personality] = {}
     if server_id not in conversation_histories[personality]:
         conversation_histories[personality][server_id] = {}
     if channel_id not in conversation_histories[personality][server_id]:
-        conversation_histories[personality][server_id][channel_id] = {}
-    if user_id not in conversation_histories[personality][server_id][channel_id]:
-        conversation_histories[personality][server_id][channel_id][user_id] = []
+        conversation_histories[personality][server_id][channel_id] = []
     
     if personality not in user_only_histories:
         user_only_histories[personality] = {}
@@ -103,7 +101,7 @@ async def on_message(message):
             "content": user_message_content
         })
 
-    history = conversation_histories[personality][server_id][channel_id][user_id]
+    history = conversation_histories[personality][server_id][channel_id]
 
     # Add user message to history
     history.append({"role": "user", "name": user_name, "content": user_message_content})
@@ -111,7 +109,7 @@ async def on_message(message):
 
     # Trim history (token based)
     history = trim_history(history, max_tokens=2000)
-    conversation_histories[personality][server_id][channel_id][user_id] = history
+    conversation_histories[personality][server_id][channel_id] = history
 
     # Only respond when bot is mentioned
     if client.user.mentioned_in(message):
@@ -129,7 +127,7 @@ async def on_message(message):
 
             # Save assistant response
             history.append({"role": "assistant", "content": client_response})
-            conversation_histories[personality][server_id][channel_id][user_id] = history
+            conversation_histories[personality][server_id][channel_id] = history
 
             await message.reply(client_response, mention_author=False)
 
