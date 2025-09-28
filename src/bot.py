@@ -4,7 +4,7 @@ import openai
 from discord import DMChannel, Interaction, Embed, app_commands
 from src.aclient import client
 from src.personalities import personalities, custom_personalities, get_system_content
-from utils.kobaldcpp_util import get_kobold_response
+from utils.kobaldcpp_util import get_kobold_response, sanitize_bot_output
 from utils.history_util import trim_history
 from utils.openai_util import get_openai_response
 from utils.content_filter import censor_curse_words, filter_controversial
@@ -104,7 +104,7 @@ async def on_message(message):
     history = conversation_histories[personality][server_id][channel_id]
 
     # Add user message to history
-    history.append({"role": "user", "name": user_name, "content": user_message_content})
+    history.append({"role": "user", "name": user_name, "content":f"{user_name}: {user_message_content}"})
     add_to_world_history(str(server_id), message.author.display_name, user_message_content)
 
     # Trim history (token based)
@@ -124,6 +124,7 @@ async def on_message(message):
         try:
             async with message.channel.typing():
                 client_response = await get_kobold_response(messages)
+                client_response = sanitize_bot_output(client_response)
 
             # Save assistant response
             history.append({"role": "assistant", "content": client_response})
