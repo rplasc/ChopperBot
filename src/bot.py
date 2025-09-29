@@ -13,7 +13,7 @@ from src.moderation.database import (init_db, increment_yap, queue_increment, fl
                                     interaction_cache, load_interaction_cache, get_personality_context,
                                     build_context, maybe_update_world, add_to_world_history)
 from src.moderation.logging import init_logging_db, logger, log_chat_message
-from src.commands import admin, user, mystical, news, recommend, relationship, weather, miscellaneous
+from src.commands import admin, user, mystical, news, recommend, relationship, weather
 
 # Setup OpenAI api for conversation feature
 openai.api_key = client.openAI_API_key
