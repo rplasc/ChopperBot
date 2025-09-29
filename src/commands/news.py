@@ -1,4 +1,5 @@
 import aiohttp
+import asyncio
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from discord import Interaction, Embed, app_commands
@@ -6,6 +7,7 @@ from src.aclient import client
 from src.personalities import get_system_content
 from utils.news_sources import NEWS_SOURCES, NEWS_ICONS
 from utils.kobaldcpp_util import get_kobold_response
+from src.moderation.logging import logger
 
 @client.tree.command(name="news", description="Get the latest headlines from a news outlet")
 async def news(interaction: Interaction, outlet: str):
@@ -20,15 +22,41 @@ async def news(interaction: Interaction, outlet: str):
 
     url = NEWS_SOURCES[outlet]
 
-    async with aiohttp.ClientSession() as session:
-       async with session.get(url) as resp:
-        if resp.status != 200:
-            await interaction.response.send_message(
-                f"⚠️ Failed to fetch news from {outlet.upper()}. (HTTP {resp.status})",
-                ephemeral=True
-            )
-            return
-        text = await resp.text()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    await interaction.followup.send(
+                        f"⚠️ Failed to fetch news from {outlet.upper()}. (HTTP {resp.status})",
+                        ephemeral=True
+                    )
+                    logger.error(f"Failed to fetch news from {outlet.upper()}. (HTTP {resp.status})")
+                    return
+                text = await resp.text()
+                
+    except aiohttp.ClientError as e:
+        await interaction.followup.send(
+            f"⚠️ Network error while fetching news from {outlet.upper()}: {str(e)}",
+            ephemeral=True
+        )
+        logger.error(f"Network error fetching from {outlet.upper()}: {str(e)}")
+        return
+        
+    except asyncio.TimeoutError:
+        await interaction.followup.send(
+            f"⚠️ Request timed out while fetching news from {outlet.upper()}.",
+            ephemeral=True
+        )
+        logger.error(f"Timeout error fetching from {outlet.upper()}")
+        return
+        
+    except Exception as e:
+        await interaction.followup.send(
+            f"⚠️ Unexpected error while fetching news from {outlet.upper()}.",
+            ephemeral=True
+        )
+        logger.error(f"Unexpected error fetching from {outlet.upper()}: {str(e)}")
+        return
 
     root = ET.fromstring(text)
     items = root.findall(".//item")[:5]
@@ -45,7 +73,7 @@ async def news(interaction: Interaction, outlet: str):
         embed.add_field(name=title, value=f"[Read more]({link})", inline=False)
 
     if not headlines:
-        await interaction.response.send_message("No headlines found.", ephemeral=True)
+        await interaction.followup.send("No headlines found.", ephemeral=True)
         return
 
     summary_prompt = (
@@ -62,7 +90,8 @@ async def news(interaction: Interaction, outlet: str):
     
     try:
         summary = await get_kobold_response(messages)
-    except Exception:
+    except Exception as e:
+        logger.error(f"[NEWS ERROR] {e}")
         summary = "Currently unavailable."
 
     if len(summary) > 1024:

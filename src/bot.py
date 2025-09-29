@@ -12,6 +12,7 @@ from src.moderation.database import (init_db, increment_yap, queue_increment, fl
                                     queue_user_log, maybe_queue_notes_update, get_user_interactions,
                                     interaction_cache, load_interaction_cache, get_personality_context,
                                     build_context, maybe_update_world, add_to_world_history)
+from src.moderation.logging import init_logging_db, logger, log_chat_message
 from src.commands import admin, user, mystical, news, recommend, relationship, weather, miscellaneous
 
 # Setup OpenAI api for conversation feature
@@ -25,11 +26,13 @@ user_only_histories = {}
 @client.event
 async def on_ready():
     await init_db()
+    await init_logging_db()
     await client.tree.sync()
     await load_interaction_cache()
     client.loop.create_task(increment_yap())
     client.loop.create_task(flush_user_logs_periodically())
     print(f'Logged in as {client.user.name}')
+    logger.info(f"Logged in as {client.user.name}")
 
 @client.event
 async def on_message(message):
@@ -39,7 +42,7 @@ async def on_message(message):
     if isinstance(message.channel, DMChannel):
         user_id = str(message.author.id)
         user_name = message.author.name
-        personality = getattr(client, "current_personality", "Chopperbot")
+        personality = getattr(client, "current_personality", "Default")
 
         if personality not in conversation_histories:
             conversation_histories[personality] = {}
@@ -66,7 +69,7 @@ async def on_message(message):
             conversation_histories[personality]["dm"][user_id] = history
             await message.reply(client_response)
         except Exception as e:
-            print(f"[DM Error] {e}")
+            logger.exception(f"[DM Error] {e}")
             await message.channel.send("I’m currently offline. Try again later.")
         return
 
@@ -131,10 +134,11 @@ async def on_message(message):
             conversation_histories[personality][server_id][channel_id] = history
 
             await message.reply(client_response, mention_author=False)
+            await log_chat_message(server_id, channel_id, str(client.user.id), client.user.name, "assistant", client_response)
 
         except Exception as e:
-            print(f"[Error] {e}")
-            await message.reply("Chopperbot is currently sleeping.")
+            logger.error(f"[Message Error] {e}")
+            await message.reply("Chopperbot is currently unavailable.")
     
     # Increment yap stats
     await queue_increment(server_id, user_id)
@@ -153,7 +157,9 @@ async def on_message(message):
     await maybe_queue_notes_update(user_id, user_name, user_history, interactions)
 
     await maybe_update_world(str(server_id))
-    
+
+    await log_chat_message(server_id, channel_id, user_id, user_name, "user", user_message_content)
+        
 @client.tree.command(name= "help",description="List of all commands")
 async def help(interaction: Interaction):
     embed = Embed(title="Help Text", description="The following commands are available:")
@@ -184,7 +190,7 @@ async def ask(interaction: Interaction, prompt: str):
         ask_conversation_histories[user_id] = trim_history(ask_conversation_histories[user_id], max_tokens=1500)
 
     except Exception as e:
-        print(f"[Ask Error] {e}")
+        logger.error(f"[Ask Error] {e}")
         client_response = "I am currently unavailable."
     await interaction.followup.send(client_response, ephemeral=True)
 
@@ -232,6 +238,6 @@ async def reset(interaction: Interaction):
         
     conversation_histories.clear()
     await interaction.followup.send("My memory has been wiped!")
-    print("Personality has been reset.")
+    logger.info("Personality has been reset.")
     
 client.run(os.getenv('DISCORD_BOT_TOKEN'))

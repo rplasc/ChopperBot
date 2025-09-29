@@ -4,6 +4,7 @@ from src.aclient import client
 from src.personalities import get_system_content
 from utils.kobaldcpp_util import get_kobold_response
 from utils.relationship_util import DATE_IDEAS
+from src.moderation.logging import logger
 
 @client.tree.command(name="compatibility", description="Check the compatibility between two users")
 async def compatibility(interaction: Interaction, user1: Member, user2: Member):
@@ -29,6 +30,7 @@ async def compatibility(interaction: Interaction, user1: Member, user2: Member):
         summary = await get_kobold_response(messages)
     except Exception as e:
         print(f"[Compatibility Error] {e}")
+        logger.error(f"[Compatibility Error] {e}")
         if compatibility < 50:
             summary = f"{user1.display_name} and {user2.display_name} don’t seem to vibe well."
         elif compatibility < 75:
@@ -90,6 +92,7 @@ async def matchmaker(interaction: Interaction, user: Member):
         summary = await get_kobold_response(messages)
     except Exception as e:
         print(f"[Matchmaker Error] {e}")
+        logger.error(f"[Matchmaker Error] {e}")
         if rating == 3:
             summary = f"{user.display_name} and {match.display_name} could get along, but it might take effort."
         elif rating == 4:

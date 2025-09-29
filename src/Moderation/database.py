@@ -5,8 +5,9 @@ import datetime
 import re
 from utils.kobaldcpp_util import get_kobold_response
 from utils.memory_util import significant_change
+from src.moderation.logging import logger
 
-DB_PATH =  "data/bot_data.db"
+DB_PATH =  "data/user_data.db"
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 # Initializes tables
@@ -141,9 +142,11 @@ async def generate_personality_notes(user_id: str, history: list):
     
     try:
         response = await get_kobold_response([{"role": "system", "content": prompt}])
+        logger.debug(f"Generated notes for {user_id}.")
         return response.strip()
     except Exception as e:
         print(f"[Notes Generation Error] {e}")
+        logger.exception(f"[Notes Generation Error] {e}")
         return None
 
 async def update_personality_notes(user_id: str, notes: str):
@@ -198,10 +201,9 @@ async def maybe_queue_notes_update(user_id: str, username: str, history: list, i
                     return  # skip if not much new
 
                 await update_personality_notes(user_id, cleaned)
-                print(f"[Notes Updated] {username}: {cleaned}")
-
+                logger.info(f"[Notes Updated] {username}: {cleaned}")
             except Exception as e:
-                print(f"[Notes Update Error] {e}")
+                logger.exception(f"[Notes Update Error] {e}")
         else:
             notes = await generate_personality_notes(user_id, history)
             await update_personality_notes(user_id, notes)
@@ -298,10 +300,10 @@ async def summarize_world_and_update(server_id: str, recent_messages: list):
                 key, value = match.groups()
                 await add_world_fact(server_id, key.strip(), value.strip())
 
-        print(f"[World Updated] {response}")
+        logger.info(f"[World Updated] {response}")
 
     except Exception as e:
-        print(f"[World Summarizer Error] {e}")
+        logger.exception(f"[World Summarizer Error] {e}")
 
 def add_to_world_history(server_id: str, author: str, content: str):
     if server_id not in world_histories:

@@ -1,6 +1,7 @@
 from discord import Interaction, Embed, Color, Member
 from src.aclient import client
 from src.moderation.database import add_world_fact, get_world_context, get_user_log
+from src.moderation.logging import logger
 
 @client.tree.command(name="add_fact", description="Add or update a world fact for this server")
 async def add_fact(interaction: Interaction, key: str, value: str):

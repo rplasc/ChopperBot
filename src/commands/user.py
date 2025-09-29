@@ -4,6 +4,7 @@ from src.aclient import client
 from src.moderation.database import show_server_interactions_user, show_server_interactions_leaderboard, get_user_log
 from utils.kobaldcpp_util import get_kobold_response
 from src.personalities import get_system_content
+from src.moderation.logging import logger
 
 async def send_profile(interaction: Interaction, target_user: Member):
     user_id = str(target_user.id)
@@ -32,6 +33,7 @@ async def send_profile(interaction: Interaction, target_user: Member):
             summary = await get_kobold_response(messages)
         except Exception as e:
             print(f"[Profile Error] {e}")
+            logger.error(f"[Profile Error] {e}")
             summary = "Summary unavailable"
 
     embed = Embed(title=f"{username}'s Profile", color=Color.blue())

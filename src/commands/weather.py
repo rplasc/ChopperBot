@@ -3,6 +3,7 @@ from discord import app_commands, Embed, Color, Interaction
 from src.aclient import client
 from src.personalities import get_system_content
 from utils.kobaldcpp_util import get_kobold_response
+from src.moderation.logging import logger
 
 WEATHER_API_KEY = client.weatherAPI
 
@@ -17,6 +18,7 @@ async def weather(interaction: Interaction, location: str):
         async with session.get(url) as resp:
             if resp.status != 200:
                 await interaction.followup.send("⚠️ Could not fetch weather data. Check the location name.")
+                logger.error("[WEATHER ERROR] Could not fetch weather data. Check the location name.")
                 return
             data = await resp.json()
 
@@ -49,6 +51,7 @@ async def weather(interaction: Interaction, location: str):
         ai_summary = await get_kobold_response(messages)
     except Exception as e:
         print(f"[Weather AI Error] {e}")
+        logger.error(f"[Weather AI Error] {e}")
         ai_summary = "Weather summary unavailable."
 
     # Build embed

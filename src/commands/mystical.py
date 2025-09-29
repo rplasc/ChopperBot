@@ -5,6 +5,7 @@ from utils.tarot_data import TAROT_CARDS
 from utils.kobaldcpp_util import get_kobold_response
 from utils.spellbook import SPELLS
 from src.personalities import get_system_content
+from src.moderation.logging import logger
 # from utils.horoscope import ZODIAC_SIGNS, get_horoscope
 
 @client.tree.command(name="tarot", description="Draw a tarot card for a reading.")
@@ -47,7 +48,8 @@ async def tarot_spread(interaction: Interaction):
 
     try:
         interpretation = await get_kobold_response(messages)
-    except Exception:
+    except Exception as e:
+        logger.error(f"[Tarot Spread Error] {e}")
         interpretation = "The cards suggest change, growth, and reflection."
 
     embed = Embed(title="✨ Three-Card Tarot Reading ✨", color=Color.blurple())
@@ -77,7 +79,8 @@ async def crystal_ball(interaction: Interaction, question: str):
 
     try:
         response = await get_kobold_response(messages)
-    except Exception:
+    except Exception as e:
+        logger.error(f"[Crystal Ball Error] {e}")
         response = "The future is too foggy at the moment."
 
     embed = Embed(color=Color.purple())

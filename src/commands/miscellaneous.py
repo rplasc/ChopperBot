@@ -2,6 +2,7 @@ from discord import Interaction, Member, Embed, Color, app_commands
 from src.aclient import client
 from utils.crime_util import build_fake_record, format_money
 from utils.kobaldcpp_util import get_kobold_response
+from src.moderation.logging import logger
 
 @client.tree.command(name="crime", description="Generate a fictional criminal record (for fun).")
 @app_commands.describe(

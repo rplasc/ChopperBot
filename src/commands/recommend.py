@@ -2,6 +2,7 @@ from discord import Interaction, Embed, app_commands
 from src.aclient import client
 from src.personalities import get_system_content
 from utils.kobaldcpp_util import get_kobold_response
+from src.moderation.logging import logger
 
 async def type_autocomplete(
     interaction: Interaction,
@@ -56,7 +57,8 @@ async def recommend(interaction: Interaction, type: str, mood: str, genre: str =
     
     try:
         recommendation = await get_kobold_response(messages)
-    except Exception:
+    except Exception as e:
+        logger.error(f"[RECOMMEND ERROR] {e}")
         recommendation = "I couldn't think of any right now."
 
     await interaction.followup.send(recommendation)
