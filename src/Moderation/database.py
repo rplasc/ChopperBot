@@ -42,12 +42,26 @@ async def init_db():
         """)    
         await db.commit()
 
+async def delete_user_data(user_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM user_logs WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM server_interactions WHERE user_id = ?", (user_id,))
+        await db.commit()
+
+async def reset_database():
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DROP TABLE IF EXISTS server_interactions")
+        await db.execute("DROP TABLE IF EXISTS user_logs")
+        await db.execute("DROP TABLE IF EXISTS world_state")
+        await db.commit()
+    await init_db()
+
 #---- Functions for 'server_interactions' ----#
 write_queue = asyncio.Queue()
 async def queue_increment(server_id: str, user_id: str):
     await write_queue.put((server_id, user_id))
 
-async def increment_yap():
+async def increment_server_interaction():
     try:
         async with aiosqlite.connect(DB_PATH) as db:
              while True:
@@ -323,6 +337,19 @@ async def maybe_update_world(server_id: str):
     if len(history) % 30 == 0 and now - last_update > 60:  # 1 min cooldown
         await summarize_world_and_update(server_id, history)
         world_update_cooldowns[server_id] = now
+
+async def delete_world_entry(server_id: str, key: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM world_state WHERE server_id = ? AND key = ?",
+            (server_id, key)
+        )
+        await db.commit()
+
+async def delete_world_context(server_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM world_state WHERE server_id = ?", (server_id,))
+        await db.commit()
 
 #---- Context Builder for responses ----#
 async def build_context(user_id: str, username: str, server_id: str | None = None) -> list:

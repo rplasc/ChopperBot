@@ -1,10 +1,26 @@
-from discord import Interaction, Embed, Color, Member
+from discord import Interaction, Embed, Color, Member, app_commands
 from datetime import datetime, timezone
 from src.aclient import client
 from src.moderation.database import show_server_interactions_user, show_server_interactions_leaderboard, get_user_log
 from utils.kobaldcpp_util import get_kobold_response
 from src.personalities import get_system_content
 from src.moderation.logging import logger
+
+@client.tree.command(name="help", description="List of all public commands")
+async def help(interaction: Interaction):
+    embed = Embed(title="📖 Help", description="The following commands are available:")
+
+    for cmd in client.tree.walk_commands():
+        if getattr(cmd.callback, "is_admin_only", False):
+            continue  
+
+        embed.add_field(
+            name=f"/{cmd.name}",
+            value=cmd.description or cmd.name,
+            inline=False
+        )
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 async def send_profile(interaction: Interaction, target_user: Member):
     user_id = str(target_user.id)
