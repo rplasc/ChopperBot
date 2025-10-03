@@ -1,9 +1,10 @@
-from discord import Interaction
+from discord import Interaction, File
 from src.aclient import client
 from src.moderation.logging import logger
 from utils.openai_util import get_openai_response
 from utils.content_filter import censor_curse_words
 from utils.history_util import trim_history
+from utils.message_util import to_discord_output
 
 ask_conversation_histories = {}
 
@@ -25,6 +26,15 @@ async def ask(interaction: Interaction, prompt: str):
     
     try:
         client_response = await get_openai_response(ask_conversation_histories[user_id])
+
+        output = to_discord_output(client_response)
+
+        if isinstance(output, File):
+            await interaction.followup.send("📄 Response was too long, see attached file:", file=output)
+        else:
+            for chunk in enumerate(output):
+                await interaction.followup.send(chunk)
+
         ask_conversation_histories[user_id].append({"role": "assistant", "content": client_response})
         ask_conversation_histories[user_id] = trim_history(ask_conversation_histories[user_id], max_tokens=1500)
 

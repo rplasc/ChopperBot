@@ -1,8 +1,9 @@
-from discord import Interaction, Embed, app_commands
+from discord import Interaction, Embed, Color, File, app_commands
 from src.aclient import client
 from src.personalities import get_system_content
 from utils.kobaldcpp_util import get_kobold_response
 from src.moderation.logging import logger
+from utils.message_util import chunk_message, to_discord_output
 
 async def type_autocomplete(
     interaction: Interaction,
@@ -24,17 +25,21 @@ async def type_autocomplete(
     results="Number of recommendations (1–5)"
 )
 @app_commands.autocomplete(type=type_autocomplete)
-async def recommend(interaction: Interaction, type: str, mood: str, genre: str = "any", rating: str = "any", results: int = 1):
+async def recommend(
+    interaction: Interaction,
+    type: str,
+    mood: str,
+    genre: str = "any",
+    rating: str = "any",
+    results: int = 1
+):
     await interaction.response.defer()
     type = type.lower()
     if type not in ["song", "movie"]:
         await interaction.response.send_message("Type must be 'song' or 'movie'.", ephemeral=True)
         return
 
-    if results < 1:
-        results = 1
-    elif results > 5:
-        results = 5
+    results = max(1, min(results, 5))
 
     genre_text = "any genre (wildcard)" if genre.lower() == "any" else genre
     rating_text = "any rating" if rating.lower() == "any" else rating
@@ -45,20 +50,42 @@ async def recommend(interaction: Interaction, type: str, mood: str, genre: str =
         f"- Mood: {mood}\n"
         f"- Genre: {genre_text}\n"
         f"- Rating: {rating_text}\n\n"
-        f"Each recommendation should include a title and a short description of why it fits."
+        f"Format the output as a numbered list with a short explanation."
     )
 
     system_content = get_system_content()
-
     messages = [
         {"role": "system", "content": system_content}, 
         {"role": "user", "content": prompt}
     ]
-    
+
     try:
         recommendation = await get_kobold_response(messages)
     except Exception as e:
         logger.error(f"[RECOMMEND ERROR] {e}")
         recommendation = "I couldn't think of any right now."
 
-    await interaction.followup.send(recommendation)
+    items = [item.strip() for item in recommendation.split("\n") if item.strip()]
+
+    embed = Embed(
+        title=f"🎶 {results} {type.title()}{'s' if results > 1 else ''} Recommendation",
+        description=f"Mood: **{mood}**, Genre: **{genre_text}**, Rating: **{rating_text}**",
+        color=Color.blurple()
+    )
+
+    for item in items:
+        chunks = chunk_message(item, limit=1024)
+        for i, chunk in enumerate(chunks):
+            name = "Recommendation" if i == 0 else "Continued"
+            embed.add_field(name=name, value=chunk, inline=False)
+
+    if len(embed) > 6000 or len(embed.fields) == 0:
+        output = to_discord_output(recommendation)
+        if isinstance(output, File):
+            await interaction.followup.send(
+                "📄 The recommendations were too long — see attached file:",
+                file=output
+            )
+            return
+
+    await interaction.followup.send(embed=embed)

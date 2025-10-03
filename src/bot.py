@@ -1,5 +1,5 @@
 import os
-from discord import DMChannel
+from discord import DMChannel, File
 from src.aclient import client
 from src.personalities import get_system_content
 from utils.kobaldcpp_util import get_kobold_response, sanitize_bot_output
@@ -10,6 +10,7 @@ from src.moderation.database import (init_db, increment_server_interaction, queu
                                     build_context, maybe_update_world, add_to_world_history)
 from src.moderation.logging import init_logging_db, logger, log_chat_message
 from src.commands import admin, user, mystical, news, recommend, relationship, weather, chatgpt
+from utils.message_util import to_discord_output
 
 # Maintain a dynamic conversation history
 conversation_histories = {}
@@ -125,7 +126,17 @@ async def on_message(message):
             history.append({"role": "assistant", "content": client_response})
             conversation_histories[personality][server_id][channel_id] = history
 
-            await message.reply(client_response, mention_author=False)
+            output = to_discord_output(client_response)
+
+            if isinstance(output, File):
+                await message.reply("📄 Response was too long, see attached file:", file=output)
+            else:
+                for i, chunk in enumerate(output):
+                    if i == 0:
+                        await message.reply(chunk)
+                    else:
+                        await message.channel.send(chunk)
+
             await log_chat_message(server_id, channel_id, str(client.user.id), client.user.name, "assistant", client_response)
 
         except Exception as e:
