@@ -2,10 +2,9 @@ import random
 from discord import Interaction, Embed, Member, Color
 from src.aclient import client
 from src.utils.tarot_data import TAROT_CARDS
-from src.utils.koboldcpp_util import get_kobold_response
 from src.utils.spellbook import SPELLS
-from src.personalities import get_system_content
 from src.moderation.logging import logger
+from src.utils.response_generator import generate_roleplay_response
 # from utils.horoscope import ZODIAC_SIGNS, get_horoscope
 
 @client.tree.command(name="tarot", description="Draw a tarot card for a reading.")
@@ -39,15 +38,18 @@ async def tarot_spread(interaction: Interaction):
         spread.append({"position": pos, "name": card["name"], "orientation": orientation, "meaning": meaning})
         spread_text += f"{pos}: {card['name']} ({orientation})"
 
-    system_content = get_system_content()
+    character = """You are a mystical fortune teller with a tarot deck. 
+    You speak in cryptic, mystical language and see glimpses of possible futures."""
 
-    messages = [
-        {"role": "system", "content": system_content}, 
-        {"role": "user", "content": f"Here is a tarot spread:\n{spread_text}\nPlease interpret how these cards connect as a reading for the querent in a sentence."}
-        ]
+    scenario = f'Someone draws these cards: "{spread_text}"\nProvide a cryptic, mystical prediction.'
 
     try:
-        interpretation = await get_kobold_response(messages)
+        interpretation = await generate_roleplay_response(
+                character_description=character,
+                scenario=scenario,
+                temperature=0.95,
+                max_tokens=250
+            )
     except Exception as e:
         logger.error(f"[Tarot Spread Error] {e}")
         interpretation = "The cards suggest change, growth, and reflection."
@@ -71,14 +73,18 @@ async def cast(interaction: Interaction, target: Member):
 async def crystal_ball(interaction: Interaction, question: str):
     await interaction.response.defer(thinking=True)
 
-    system_content = get_system_content()
-    messages = [
-        {"role": "system", "content": system_content}, 
-        {"role": "user", "content": f"Pretend you are a crystal ball and answer this question with a short and vague response:\n{question}\n"}
-        ]
+    character = """You are a mystical fortune teller with a crystal ball. 
+    You speak in cryptic, mystical language and see glimpses of possible futures."""
+
+    scenario = f'Someone asks: "{question}"\nProvide a cryptic, mystical prediction.'
 
     try:
-        response = await get_kobold_response(messages)
+        response = await generate_roleplay_response(
+            character_description=character,
+            scenario=scenario,
+            temperature=0.95,
+            max_tokens=250
+        )
     except Exception as e:
         logger.error(f"[Crystal Ball Error] {e}")
         response = "The future is too foggy at the moment."

@@ -1,7 +1,6 @@
 from discord import Interaction, Embed, Color, File, app_commands
 from src.aclient import client
-from src.personalities import get_system_content
-from src.utils.koboldcpp_util import get_kobold_response
+from src.utils.response_generator import generate_command_response
 from src.moderation.logging import logger
 from src.utils.message_util import chunk_message, to_discord_output
 
@@ -53,14 +52,13 @@ async def recommend(
         f"Format the output as a numbered list with a short explanation."
     )
 
-    system_content = get_system_content()
-    messages = [
-        {"role": "system", "content": system_content}, 
-        {"role": "user", "content": prompt}
-    ]
-
     try:
-        recommendation = await get_kobold_response(messages)
+        recommendation = await generate_command_response(
+            prompt=prompt,
+            use_personality=True,
+            temperature=0.8,
+            max_tokens=512
+        )
     except Exception as e:
         logger.error(f"[RECOMMEND ERROR] {e}")
         recommendation = "I couldn't think of any right now."

@@ -4,9 +4,8 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from discord import Interaction, Embed, app_commands
 from src.aclient import client
-from src.personalities import get_system_content
 from src.utils.news_sources import NEWS_SOURCES, NEWS_ICONS
-from src.utils.koboldcpp_util import get_kobold_response
+from src.utils.response_generator import generate_command_response
 from src.moderation.logging import logger
 
 @client.tree.command(name="news", description="Get the latest headlines from a news outlet")
@@ -82,14 +81,13 @@ async def news(interaction: Interaction, outlet: str):
         + "\n\nPlease provide a short (2–3 sentence) overall summary of these headlines."
     )
 
-    system_content = get_system_content()
-    messages = [
-        {"role": "system", "content": system_content}, 
-        {"role": "user", "content": summary_prompt}
-        ]
-    
     try:
-        summary = await get_kobold_response(messages)
+        summary = await generate_command_response(
+            prompt=summary_prompt,
+            use_personality=True,
+            temperature=0.8,
+            max_tokens=300
+        )
     except Exception as e:
         logger.error(f"[NEWS ERROR] {e}")
         summary = "Currently unavailable."

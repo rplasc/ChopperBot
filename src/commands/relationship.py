@@ -1,8 +1,7 @@
 import random
 from discord import Interaction, Member, Embed, Color
 from src.aclient import client
-from src.personalities import get_system_content
-from src.utils.koboldcpp_util import get_kobold_response
+from src.utils.response_generator import generate_command_response
 from src.utils.relationship_util import DATE_IDEAS
 from src.moderation.logging import logger
 
@@ -20,14 +19,13 @@ async def compatibility(interaction: Interaction, user1: Member, user2: Member):
     # Prompt based on compatibility
     prompt = f"{user1.display_name} and {user2.display_name} have a compatibility percentage of {compatibility}%. Give reasons and explain why they might be compatible in 2-3 sentences."
 
-    system_content = get_system_content()
-    messages = [
-        {"role": "system", "content": system_content}, 
-        {"role": "user", "content": prompt}
-    ]
-
     try:
-        summary = await get_kobold_response(messages)
+        summary = await generate_command_response(
+            prompt=prompt,
+            use_personality=True,
+            temperature=0.75,
+            max_tokens=350
+        )
     except Exception as e:
         print(f"[Compatibility Error] {e}")
         logger.error(f"[Compatibility Error] {e}")
@@ -82,14 +80,13 @@ async def matchmaker(interaction: Interaction, user: Member):
     # Prompt for explanation
     prompt = f"{user.display_name} has been matched with {match.display_name}! Their match rating is {rating}/5. Give reasons and explain why they might (or might not) be compatible in 2-3 sentences."
 
-    system_content = get_system_content()
-    messages = [
-        {"role": "system", "content": system_content},
-        {"role": "user", "content": prompt}
-    ]
-
     try:
-        summary = await get_kobold_response(messages)
+        summary = await generate_command_response(
+            prompt=prompt,
+            use_personality=True,
+            temperature=0.9,
+            max_tokens=350
+        )
     except Exception as e:
         print(f"[Matchmaker Error] {e}")
         logger.error(f"[Matchmaker Error] {e}")

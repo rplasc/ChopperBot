@@ -2,8 +2,7 @@ from discord import Interaction, Embed, Color, Member, app_commands
 from datetime import datetime, timezone
 from src.aclient import client
 from src.moderation.database import show_server_interactions_user, show_server_interactions_leaderboard, get_user_log
-from src.utils.koboldcpp_util import get_kobold_response
-from src.personalities import get_system_content
+from src.utils.response_generator import generate_command_response
 from src.moderation.logging import logger
 
 @client.tree.command(name="help", description="List of all public commands")
@@ -41,12 +40,14 @@ async def send_profile(interaction: Interaction, target_user: Member):
     summary = "Not enough data."
     if personality_notes:
         prompt = f"Summarize {username}'s personality using these notes: {personality_notes}"
-        messages = [
-            {"role": "system", "content": get_system_content()},
-            {"role": "user", "content": prompt}
-        ]
+
         try:
-            summary = await get_kobold_response(messages)
+            summary = await generate_command_response(
+                prompt=prompt,
+                use_personality=True,
+                temperature=0.85,
+                max_tokens=200
+            )
         except Exception as e:
             print(f"[Profile Error] {e}")
             logger.error(f"[Profile Error] {e}")

@@ -1,6 +1,6 @@
 from discord import Interaction, Embed, Color, Member, app_commands
 from src.aclient import client
-from src.personalities import personalities, custom_personalities
+from src.personalities import personalities, set_custom_personality, get_current_personality
 from src.moderation.database import (add_world_fact, get_world_context, get_user_log, delete_user_data,
                                      delete_world_context, reset_database, delete_world_entry, get_pool_stats,
                                      invalidate_user_log_cache)
@@ -64,8 +64,7 @@ async def pretend(interaction: Interaction, personality: str):
     await interaction.response.defer()
     censored_personality = censor_curse_words(personality)
     if filter_controversial(censored_personality):
-        client.current_personality = custom_personalities(censored_personality)
-        client.is_custom_personality = True
+        set_custom_personality(censored_personality)
         conversation_histories_cache.clear()
         embed = Embed(title="Personality Change", description=f"I will now act like {censored_personality}")
     else:
@@ -251,6 +250,52 @@ async def pool_stats(interaction: Interaction):
         inline=False
     )
     
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@admin_only_command(name="personality_info", description="Show detailed info about current personality")
+@app_commands.checks.has_permissions(administrator=True)
+async def personality_info(interaction: Interaction):
+    
+    personality = get_current_personality()
+    
+    if not personality:
+        await interaction.response.send_message("❌ No personality loaded", ephemeral=True)
+        return
+    
+    embed = Embed(
+        title=f"🎭 Current Personality: {personality.name}",
+        color=Color.purple()
+    )
+    
+    # Parameters
+    embed.add_field(
+        name="Generation Parameters",
+        value=f"**Temperature:** {personality.temperature}\n"
+              f"**Formality:** {personality.formality:.1%}\n"
+              f"**Verbosity:** {personality.verbosity:.1%}\n"
+              f"**Emotional Range:** {personality.emotional_range:.1%}\n"
+              f"**Creativity:** {personality.creativity:.1%}",
+        inline=True
+    )
+    
+    # Characteristics
+    embed.add_field(
+        name="Characteristics",
+        value=f"**Max Tokens:** {personality.max_tokens_preferred}\n"
+              f"**Can Use Slang:** {'Yes' if personality.can_use_slang else 'No'}\n"
+              f"**Can Be Edgy:** {'Yes' if personality.can_be_edgy else 'No'}\n"
+              f"**Repetition Penalty:** {personality.repetition_penalty}",
+        inline=True
+    )
+    
+    # Preview of prompt
+    prompt_preview = personality.get_base_prompt()[:200] + "..."
+    embed.add_field(
+        name="Prompt Preview",
+        value=prompt_preview,
+        inline=False
+    )
+
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @admin_only_command(name="admin_help", description="List of all admin commands")

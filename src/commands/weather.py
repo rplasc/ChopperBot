@@ -1,8 +1,7 @@
 import aiohttp
 from discord import app_commands, Embed, Color, Interaction
 from src.aclient import client
-from src.personalities import get_system_content
-from src.utils.koboldcpp_util import get_kobold_response
+from src.utils.response_generator import generate_command_response
 from src.moderation.logging import logger
 
 WEATHER_API_KEY = client.weatherAPI
@@ -58,14 +57,13 @@ async def weather(
         f"humidity {humidity}%, wind {wind_kph} kph. "
     )
 
-    system_content = get_system_content()
-    messages = [
-        {"role": "system", "content": system_content},
-        {"role": "user", "content": prompt}
-    ]
-
     try:
-        ai_summary = await get_kobold_response(messages)
+        ai_summary = await generate_command_response(
+            prompt=prompt,
+            use_personality=True,
+            temperature=0.85,
+            max_tokens=200
+        )
     except Exception as e:
         logger.error(f"[Weather AI Error] {e}")
         ai_summary = "Weather summary unavailable."
@@ -150,14 +148,13 @@ async def forecast(
         f"Provide a friendly summary highlighting trends (e.g., rain, temperature shifts)."
     )
 
-    system_content = get_system_content()
-    messages = [
-        {"role": "system", "content": system_content},
-        {"role": "user", "content": prompt}
-    ]
-
     try:
-        ai_summary = await get_kobold_response(messages)
+        ai_summary = await generate_command_response(
+            prompt=prompt,
+            use_personality=True,
+            temperature=0.85,
+            max_tokens=200
+        )
     except Exception as e:
         logger.error(f"[Forecast AI Error] {e}")
         ai_summary = "Forecast summary unavailable."
