@@ -17,7 +17,7 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 
 # Expose a port (Optional: Only needed if using HTTP servers or health checks)
-EXPOSE 8080
+# EXPOSE 8080
 
 # Run the bot using the command
 CMD ["python", "main.py"]
