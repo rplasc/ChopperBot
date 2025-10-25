@@ -1,10 +1,10 @@
 from discord import Interaction, File
 from src.aclient import client
 from src.moderation.logging import logger
-from utils.openai_util import get_openai_response
-from utils.content_filter import censor_curse_words
-from utils.history_util import trim_history
-from utils.message_util import to_discord_output
+from src.utils.openai_util import get_openai_response
+from src.utils.content_filter import censor_curse_words
+from src.utils.history_util import trim_history
+from src.utils.message_util import to_discord_output
 
 ask_conversation_histories = {}
 

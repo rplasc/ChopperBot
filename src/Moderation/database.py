@@ -3,8 +3,8 @@ import aiosqlite
 import asyncio
 import datetime
 import re
-from utils.kobaldcpp_util import get_kobold_response
-from utils.memory_util import significant_change
+from src.utils.kobaldcpp_util import get_kobold_response
+from src.utils.memory_util import significant_change
 from src.moderation.logging import logger
 
 DB_PATH =  "data/user_data.db"

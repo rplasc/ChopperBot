@@ -1,9 +1,9 @@
 import random
 from discord import Interaction, Embed, Member, Color
 from src.aclient import client
-from utils.tarot_data import TAROT_CARDS
-from utils.kobaldcpp_util import get_kobold_response
-from utils.spellbook import SPELLS
+from src.utils.tarot_data import TAROT_CARDS
+from src.utils.kobaldcpp_util import get_kobold_response
+from src.utils.spellbook import SPELLS
 from src.personalities import get_system_content
 from src.moderation.logging import logger
 # from utils.horoscope import ZODIAC_SIGNS, get_horoscope

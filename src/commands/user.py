@@ -2,7 +2,7 @@ from discord import Interaction, Embed, Color, Member, app_commands
 from datetime import datetime, timezone
 from src.aclient import client
 from src.moderation.database import show_server_interactions_user, show_server_interactions_leaderboard, get_user_log
-from utils.kobaldcpp_util import get_kobold_response
+from src.utils.kobaldcpp_util import get_kobold_response
 from src.personalities import get_system_content
 from src.moderation.logging import logger
 

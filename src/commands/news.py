@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from discord import Interaction, Embed, app_commands
 from src.aclient import client
 from src.personalities import get_system_content
-from utils.news_sources import NEWS_SOURCES, NEWS_ICONS
-from utils.kobaldcpp_util import get_kobold_response
+from src.utils.news_sources import NEWS_SOURCES, NEWS_ICONS
+from src.utils.kobaldcpp_util import get_kobold_response
 from src.moderation.logging import logger
 
 @client.tree.command(name="news", description="Get the latest headlines from a news outlet")

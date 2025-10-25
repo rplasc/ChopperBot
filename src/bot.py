@@ -2,15 +2,15 @@ import os
 from discord import DMChannel, File
 from src.aclient import client
 from src.personalities import get_system_content
-from utils.kobaldcpp_util import get_kobold_response, sanitize_bot_output
-from utils.history_util import trim_history
+from src.utils.kobaldcpp_util import get_kobold_response, sanitize_bot_output
+from src.utils.history_util import trim_history
 from src.moderation.database import (init_db, increment_server_interaction, queue_increment, flush_user_logs_periodically,
                                     queue_user_log, maybe_queue_notes_update, get_user_interactions,
                                     interaction_cache, load_interaction_cache, get_personality_context,
                                     build_context, maybe_update_world, add_to_world_history)
 from src.moderation.logging import init_logging_db, logger, log_chat_message
 from src.commands import admin, user, mystical, news, recommend, relationship, weather, chatgpt
-from utils.message_util import to_discord_output
+from src.utils.message_util import to_discord_output
 
 # Maintain a dynamic conversation history
 conversation_histories = {}

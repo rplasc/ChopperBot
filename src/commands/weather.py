@@ -2,7 +2,7 @@ import aiohttp
 from discord import app_commands, Embed, Color, Interaction
 from src.aclient import client
 from src.personalities import get_system_content
-from utils.kobaldcpp_util import get_kobold_response
+from src.utils.kobaldcpp_util import get_kobold_response
 from src.moderation.logging import logger
 
 WEATHER_API_KEY = client.weatherAPI

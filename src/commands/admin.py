@@ -3,7 +3,7 @@ from src.aclient import client
 from src.personalities import personalities, custom_personalities
 from src.moderation.database import add_world_fact, get_world_context, get_user_log, delete_user_data, delete_world_context, reset_database, delete_world_entry
 from src.moderation.logging import logger
-from utils.content_filter import filter_controversial, censor_curse_words
+from src.utils.content_filter import filter_controversial, censor_curse_words
 
 # Flag for personality locking
 personality_locked = False
