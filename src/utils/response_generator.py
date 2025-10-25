@@ -2,6 +2,7 @@ import aiohttp
 import re
 from typing import List, Dict, Optional
 from src.personalities import get_generation_params, get_current_personality
+from src.aclient import client
 from src.moderation.logging import logger
 
 def detect_conversation_type(content: str) -> str:
@@ -95,7 +96,7 @@ async def generate_response(
     return "I'm having trouble forming a response right now. Could you try rephrasing that?"
 
 async def _call_kobold_api(messages: List[Dict], params: Dict) -> str:
-    url = "http://127.0.0.1:5001/v1/chat/completions"
+    url = client.kobold_url
     
     # Build full payload
     payload = {

@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 from discord import Intents, app_commands
 
-load_dotenv()  # take environment variables from .env.
+load_dotenv()
 
 # Creates client with Discord and OpenAI api
 class aclient(discord.Client):
@@ -18,6 +18,9 @@ class aclient(discord.Client):
         self.isPrivate = False
         self.current_personality = "Default"
         self.is_custom_personality = False
+
+        # KoboldCPP Integration
+        self.kobold_url = os.getenv('KOBOLD_API_URL')
         
         # ChatGPT integration
         self.openAI_API_key = os.getenv('OPENAI_API_KEY')

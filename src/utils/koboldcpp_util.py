@@ -1,8 +1,9 @@
 import aiohttp
 import re
+from src.aclient import client
 
 async def get_kobold_response(messages):
-    url = "http://127.0.0.1:5001/v1/chat/completions"
+    url = client.kobold_url
     payload = {
         "messages": messages,
         "temperature": 0.8,
