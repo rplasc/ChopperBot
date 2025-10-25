@@ -74,7 +74,7 @@ async def crystal_ball(interaction: Interaction, question: str):
     system_content = get_system_content()
     messages = [
         {"role": "system", "content": system_content}, 
-        {"role": "user", "content": f"Pretend you are a crystal ball and answer this question:\n{question}\n"}
+        {"role": "user", "content": f"Pretend you are a crystal ball and answer this question with a short and vague response:\n{question}\n"}
         ]
 
     try:
