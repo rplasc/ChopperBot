@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import time
 import re
+from contextlib import asynccontextmanager
 from src.utils.kobaldcpp_util import get_kobold_response
 from src.utils.memory_util import significant_change
 from src.moderation.logging import logger
@@ -14,6 +15,97 @@ os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 # User log cache configuration
 USER_LOG_CACHE_TTL = 120  # 2 minutes cache lifetime
 user_log_cache = {}  # {user_id: (log_data, timestamp)}
+
+# Connection pool configuration
+MAX_POOL_SIZE = 3
+MIN_POOL_SIZE = 2
+CONNECTION_TIMEOUT = 30
+
+class ConnectionPool:
+    def __init__(self, db_path: str, min_size: int = MIN_POOL_SIZE, max_size: int = MAX_POOL_SIZE):
+        self.db_path = db_path
+        self.min_size = min_size
+        self.max_size = max_size
+        self._pool = asyncio.Queue(maxsize=max_size)
+        self._size = 0
+        self._lock = asyncio.Lock()
+    
+    async def init(self):
+        for _ in range(self.min_size):
+            conn = await aiosqlite.connect(self.db_path)
+            conn.row_factory = aiosqlite.Row
+            await self._pool.put(conn)
+            self._size += 1
+        logger.info(f"Connection pool initialized with {self.min_size} connections")
+    
+    async def acquire(self):
+        try:
+            # Try to get existing connection with timeout
+            conn = await asyncio.wait_for(self._pool.get(), timeout=CONNECTION_TIMEOUT)
+            return conn
+        except asyncio.TimeoutError:
+            # Pool exhausted and no connections available
+            async with self._lock:
+                if self._size < self.max_size:
+                    # Create new connection if under max size
+                    conn = await aiosqlite.connect(self.db_path)
+                    conn.row_factory = aiosqlite.Row
+                    self._size += 1
+                    logger.debug(f"Created new connection. Pool size: {self._size}")
+                    return conn
+                else:
+                    # Wait indefinitely if at max capacity
+                    return await self._pool.get()
+    
+    async def release(self, conn):
+        try:
+            self._pool.put_nowait(conn)
+        except asyncio.QueueFull:
+            # Pool is full, close the connection
+            await conn.close()
+            async with self._lock:
+                self._size -= 1
+            logger.debug(f"Closed excess connection. Pool size: {self._size}")
+    
+    async def close(self):
+        while not self._pool.empty():
+            conn = await self._pool.get()
+            await conn.close()
+            self._size -= 1
+        logger.info("Connection pool closed")
+    
+    @asynccontextmanager
+    async def get_connection(self):
+        conn = await self.acquire()
+        try:
+            yield conn
+        finally:
+            await self.release(conn)
+
+# Global connection pool instance
+db_pool = None
+
+async def init_connection_pool():
+    global db_pool
+    if db_pool is None:
+        db_pool = ConnectionPool(DB_PATH)
+        await db_pool.init()
+
+async def close_connection_pool():
+    global db_pool
+    if db_pool:
+        await db_pool.close()
+        db_pool = None
+
+def get_pool_stats():
+    if db_pool:
+        return {
+            "pool_size": db_pool._size,
+            "available_connections": db_pool._pool.qsize(),
+            "max_size": db_pool.max_size,
+            "write_queue_size": write_queue.qsize()
+        }
+    return None
 
 # Initializes tables
 async def init_db():
@@ -47,8 +139,10 @@ async def init_db():
         """)    
         await db.commit()
 
+    await init_connection_pool()
+
 async def delete_user_data(user_id: str):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_pool.get_connection() as db:
         await db.execute("DELETE FROM user_logs WHERE user_id = ?", (user_id,))
         await db.execute("DELETE FROM server_interactions WHERE user_id = ?", (user_id,))
         await db.commit()
@@ -69,28 +163,81 @@ async def reset_database():
 
 #---- Functions for 'server_interactions' ----#
 write_queue = asyncio.Queue()
+
+# Batching configuration
+BATCH_SIZE = 10           # Process up to 20 increments at once
+BATCH_TIMEOUT = 2.0       # Wait max 1 second to accumulate batch
+FLUSH_INTERVAL = 5.0      # Force flush every 5 seconds even with small batches
+
 async def queue_increment(server_id: str, user_id: str):
     await write_queue.put((server_id, user_id))
 
 async def increment_server_interaction():
     try:
-        async with aiosqlite.connect(DB_PATH) as db:
-             while True:
-                server_id, user_id = await write_queue.get()
+        last_flush = time.time()
+        
+        while True:
+            batch = []
+            start_time = time.time()
+            
+            # Collect items for batch
+            while len(batch) < BATCH_SIZE:
+                time_remaining = BATCH_TIMEOUT - (time.time() - start_time)
+                
+                if time_remaining <= 0:
+                    break
+                
+                try:
+                    # Wait for next item with remaining timeout
+                    item = await asyncio.wait_for(write_queue.get(), timeout=time_remaining)
+                    batch.append(item)
+                    write_queue.task_done()
+                except asyncio.TimeoutError:
+                    break
+            
+            # Force flush if enough time has passed, even with small batch
+            time_since_flush = time.time() - last_flush
+            if not batch and time_since_flush < FLUSH_INTERVAL:
+                await asyncio.sleep(0.1)  # Brief sleep to avoid busy loop
+                continue
+            
+            if batch:
+                await _flush_interaction_batch(batch)
+                last_flush = time.time()
+                logger.debug(f"Flushed batch of {len(batch)} interaction increments")
+            
+    except Exception as e:
+        logger.exception(f"Critical error in increment_server_interaction: {e}")
+
+async def _flush_interaction_batch(batch: list):
+    if not batch:
+        return
+    
+    try:
+        async with db_pool.get_connection() as db:
+            # Group increments by (server_id, user_id) to handle duplicates
+            increment_counts = {}
+            for server_id, user_id in batch:
+                key = (server_id, user_id)
+                increment_counts[key] = increment_counts.get(key, 0) + 1
+            
+            # Execute all updates in a single transaction
+            for (server_id, user_id), count in increment_counts.items():
                 await db.execute("""
                     INSERT INTO server_interactions (server_id, user_id, count)
-                    VALUES (?, ?, 1)
+                    VALUES (?, ?, ?)
                     ON CONFLICT(server_id, user_id)
-                    DO UPDATE SET count = count + 1
-                """, (server_id, user_id))
-                await db.commit()
-                write_queue.task_done()
+                    DO UPDATE SET count = count + ?
+                """, (server_id, user_id, count, count))
+            
+            await db.commit()
+            
     except aiosqlite.Error as e:
-        print(f"Database error in increment_yap: {e}")
+        logger.error(f"Database error in _flush_interaction_batch: {e}")
 
 async def show_server_interactions_user(server_id: str, user_id: str) -> int:
     try:
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with db_pool.get_connection() as db:
             cursor = await db.execute("SELECT count FROM server_interactions WHERE server_id=? AND user_id=?", (server_id, user_id))
             row = await cursor.fetchone()
             count = row[0] if row else 0
@@ -100,7 +247,7 @@ async def show_server_interactions_user(server_id: str, user_id: str) -> int:
 
 async def show_server_interactions_leaderboard(server_id: str):
     try:
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with db_pool.get_connection() as db:
             cursor = await db.execute(
                 "SELECT user_id, count FROM server_interactions WHERE server_id=? ORDER BY count DESC LIMIT 10",
                 (server_id,)
@@ -134,7 +281,7 @@ async def flush_user_logs():
     
     global interaction_cache
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_pool.get_connection() as db:
         for uid, data in user_log_queue.items():
             interactions = interaction_cache.get(uid, data["interactions"])
             await db.execute("""
@@ -146,6 +293,10 @@ async def flush_user_logs():
                     last_seen = excluded.last_seen
             """, (uid, data["username"], interactions, data["last_seen"]))
         await db.commit()
+
+    for uid in user_log_queue.keys():
+        if uid in user_log_cache:
+            del user_log_cache[uid]
 
     user_log_queue.clear()
 
@@ -175,7 +326,7 @@ async def generate_personality_notes(user_id: str, history: list):
         return None
 
 async def update_personality_notes(user_id: str, notes: str):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_pool.get_connection() as db:
         await db.execute("""
             INSERT INTO user_logs (user_id, personality_notes)
             VALUES (?, ?)
@@ -237,7 +388,7 @@ async def maybe_queue_notes_update(user_id: str, username: str, history: list, i
             await update_personality_notes(user_id, notes)
 
 async def get_user_log(user_id: str):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_pool.get_connection() as db:
         cursor = await db.execute("SELECT * FROM user_logs WHERE user_id = ?", (user_id,))
         row = await cursor.fetchone()
         await cursor.close()
@@ -288,7 +439,7 @@ async def load_interaction_cache():
     global interaction_cache
     interaction_cache.clear()
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_pool.get_connection() as db:
         async with db.execute("SELECT user_id, interactions FROM user_logs") as cursor:
             async for row in cursor:
                 user_id, interactions = row
@@ -301,7 +452,7 @@ world_histories = {} # {server_id: [ {author, content}, ... ]}
 world_update_cooldowns = {}
 
 async def add_world_fact(server_id: str, key: str, value: str):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_pool.get_connection() as db:
         await db.execute("""
             INSERT INTO world_state (server_id, key, value, last_updated)
             VALUES (?, ?, ?, ?)
@@ -312,7 +463,7 @@ async def add_world_fact(server_id: str, key: str, value: str):
         await db.commit()
 
 async def get_world_context(server_id: str) -> str:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_pool.get_connection() as db:
         async with db.execute("""
             SELECT key, value FROM world_state WHERE server_id = ?
         """, (server_id,)) as cursor:
@@ -381,7 +532,7 @@ async def maybe_update_world(server_id: str):
         world_histories[server_id] = []
 
 async def delete_world_entry(server_id: str, key: str):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_pool.get_connection() as db:
         await db.execute(
             "DELETE FROM world_state WHERE server_id = ? AND key = ?",
             (server_id, key)
@@ -389,7 +540,7 @@ async def delete_world_entry(server_id: str, key: str):
         await db.commit()
 
 async def delete_world_context(server_id: str):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_pool.get_connection() as db:
         await db.execute("DELETE FROM world_state WHERE server_id = ?", (server_id,))
         await db.commit()
 

@@ -15,8 +15,8 @@ from src.commands import admin, user, mystical, news, recommend, relationship, w
 from src.utils.message_util import to_discord_output
 
 # LRU Cache Configuration
-MAX_CACHED_CHANNELS = 100  # Adjust based on your bot's scale and memory constraints
-MAX_CACHED_DM_USERS = 50   # Separate limit for DM conversations
+MAX_CACHED_CHANNELS = 50  # Adjust based on your bot's scale and memory constraints
+MAX_CACHED_DM_USERS = 25   # Separate limit for DM conversations
 
 # LRU-cached conversation histories
 # Structure: {(personality, server_id_or_"dm", channel_id_or_user_id): [messages]}
@@ -36,8 +36,8 @@ def get_or_create_history(personality: str, server_id: str, channel_id: str) -> 
     
     # Evict oldest entry if cache is full
     if len(conversation_histories_cache) >= max_cache:
-        remove_key = conversation_histories_cache.popitem(last=False)
-        logger.debug(f"Removed conversation history: {remove_key[0]}")
+        evicted_key, _ = conversation_histories_cache.popitem(last=False)
+        logger.debug(f"LRU evicted: {evicted_key[0]}/{evicted_key[1]}/{evicted_key[2]}")
     
     # Create new history
     conversation_histories_cache[key] = []
@@ -62,6 +62,16 @@ async def on_ready():
     client.loop.create_task(flush_user_logs_periodically())
     print(f'Logged in as {client.user.name}')
     logger.info(f"Logged in as {client.user.name}")
+
+async def shutdown():
+    from src.moderation.database import close_connection_pool, flush_user_logs
+    logger.info("Shutting down bot...")
+    try:
+        await flush_user_logs()
+        await close_connection_pool()
+        logger.info("Shutdown complete")
+    except Exception as e:
+        logger.error(f"Error during shutdown: {e}")
 
 @client.event
 async def on_message(message):
@@ -167,4 +177,9 @@ async def on_message(message):
 
     await log_chat_message(server_id, channel_id, user_id, user_name, "user", user_message_content)
     
-client.run(os.getenv('DISCORD_BOT_TOKEN'))
+try:
+    client.run(os.getenv('DISCORD_BOT_TOKEN'))
+except KeyboardInterrupt:
+    logger.info("Received shutdown signal")
+finally:
+    asyncio.run(shutdown())
