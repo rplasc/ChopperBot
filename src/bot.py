@@ -1,4 +1,6 @@
 import os
+import asyncio
+from collections import OrderedDict
 from discord import DMChannel, File
 from src.aclient import client
 from src.personalities import get_system_content
@@ -12,9 +14,43 @@ from src.moderation.logging import init_logging_db, logger, log_chat_message
 from src.commands import admin, user, mystical, news, recommend, relationship, weather, chatgpt
 from src.utils.message_util import to_discord_output
 
-# Maintain a dynamic conversation history
-conversation_histories = {}
-user_only_histories = {}
+# LRU Cache Configuration
+MAX_CACHED_CHANNELS = 100  # Adjust based on your bot's scale and memory constraints
+MAX_CACHED_DM_USERS = 50   # Separate limit for DM conversations
+
+# LRU-cached conversation histories
+# Structure: {(personality, server_id_or_"dm", channel_id_or_user_id): [messages]}
+conversation_histories_cache = OrderedDict()
+
+def get_or_create_history(personality: str, server_id: str, channel_id: str) -> list:
+    key = (personality, server_id, channel_id)
+    
+    # If exists, move to end (mark as recently used)
+    if key in conversation_histories_cache:
+        conversation_histories_cache.move_to_end(key)
+        return conversation_histories_cache[key]
+    
+    # Determine cache limit based on type
+    is_dm = server_id == "dm"
+    max_cache = MAX_CACHED_DM_USERS if is_dm else MAX_CACHED_CHANNELS
+    
+    # Evict oldest entry if cache is full
+    if len(conversation_histories_cache) >= max_cache:
+        remove_key = conversation_histories_cache.popitem(last=False)
+        logger.debug(f"Removed conversation history: {remove_key[0]}")
+    
+    # Create new history
+    conversation_histories_cache[key] = []
+    return conversation_histories_cache[key]
+
+def extract_user_history(history: list, user_id: str = None) -> list:
+    user_msgs = []
+    for msg in history:
+        if msg.get("role") == "user":
+            # For user-specific filtering (if needed)
+            if user_id is None or msg.get("name") == user_id:
+                user_msgs.append(msg)
+    return user_msgs
 
 @client.event
 async def on_ready():
@@ -37,17 +73,10 @@ async def on_message(message):
         user_name = message.author.name
         personality = getattr(client, "current_personality", "Default")
 
-        if personality not in conversation_histories:
-            conversation_histories[personality] = {}
-        if "dm" not in conversation_histories[personality]:
-            conversation_histories[personality]["dm"] = {}
-        if user_id not in conversation_histories[personality]["dm"]:
-            conversation_histories[personality]["dm"][user_id] = []
+        history = get_or_create_history(personality, "dm", user_id)
 
-        history = conversation_histories[personality]["dm"][user_id]
         history.append({"role": "user", "name": message.author.name, "content": message.content})
-        history = trim_history(history, max_tokens=2000)
-        conversation_histories[personality]["dm"][user_id] = history
+        history[:] = trim_history(history, max_tokens=2000)
 
         system_content = get_system_content()
         messages = [{"role": "system", "content": system_content}] + history
@@ -59,7 +88,6 @@ async def on_message(message):
             async with message.channel.typing():
                 client_response = await get_kobold_response(messages)
             history.append({"role": "assistant", "content": client_response})
-            conversation_histories[personality]["dm"][user_id] = history
             await message.reply(client_response)
         except Exception as e:
             logger.exception(f"[DM Error] {e}")
@@ -75,37 +103,15 @@ async def on_message(message):
     # Initialize nested history structure:
     # { personality -> server -> channel -> [messages] }
     personality = getattr(client, "current_personality", "Default")
-    if personality not in conversation_histories:
-        conversation_histories[personality] = {}
-    if server_id not in conversation_histories[personality]:
-        conversation_histories[personality][server_id] = {}
-    if channel_id not in conversation_histories[personality][server_id]:
-        conversation_histories[personality][server_id][channel_id] = []
-    
-    if personality not in user_only_histories:
-        user_only_histories[personality] = {}
-    if server_id not in user_only_histories[personality]:
-        user_only_histories[personality][server_id] = {}
-    if channel_id not in user_only_histories[personality][server_id]:
-        user_only_histories[personality][server_id][channel_id] = {}
-    if user_id not in user_only_histories[personality][server_id][channel_id]:
-        user_only_histories[personality][server_id][channel_id][user_id] = []
 
-    if message.author != client.user:
-        user_only_histories[personality][server_id][channel_id][user_id].append({
-            "role": "user",
-            "content": user_message_content
-        })
-
-    history = conversation_histories[personality][server_id][channel_id]
+    history = get_or_create_history(personality, server_id, channel_id)
 
     # Add user message to history
     history.append({"role": "user", "name": user_name, "content":f"{user_name}: {user_message_content}"})
     add_to_world_history(str(server_id), message.author.display_name, user_message_content)
 
     # Trim history (token based)
-    history = trim_history(history, max_tokens=2000)
-    conversation_histories[personality][server_id][channel_id] = history
+    history[:] = trim_history(history, max_tokens=2000)
 
     # Only respond when bot is mentioned
     if client.user.mentioned_in(message):
@@ -124,7 +130,6 @@ async def on_message(message):
 
             # Save assistant response
             history.append({"role": "assistant", "content": client_response})
-            conversation_histories[personality][server_id][channel_id] = history
 
             output = to_discord_output(client_response)
 
@@ -155,11 +160,10 @@ async def on_message(message):
     # fetch interaction count fresh from DB
     interactions = await get_user_interactions(user_id)
 
-    # Maybe update personality notes
-    user_history = user_only_histories[personality][server_id][channel_id][user_id]
-    await maybe_queue_notes_update(user_id, user_name, user_history, interactions)
-
-    await maybe_update_world(str(server_id))
+    # Maybe update personality and world notes
+    user_history = [msg for msg in history if msg.get("role") == "user"]
+    asyncio.create_task(maybe_queue_notes_update(user_id, user_name, user_history, interactions))
+    asyncio.create_task(maybe_update_world(str(server_id)))
 
     await log_chat_message(server_id, channel_id, user_id, user_name, "user", user_message_content)
     

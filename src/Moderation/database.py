@@ -2,6 +2,7 @@ import os
 import aiosqlite
 import asyncio
 import datetime
+import time
 import re
 from src.utils.kobaldcpp_util import get_kobold_response
 from src.utils.memory_util import significant_change
@@ -9,6 +10,10 @@ from src.moderation.logging import logger
 
 DB_PATH =  "data/user_data.db"
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
+# User log cache configuration
+USER_LOG_CACHE_TTL = 120  # 2 minutes cache lifetime
+user_log_cache = {}  # {user_id: (log_data, timestamp)}
 
 # Initializes tables
 async def init_db():
@@ -48,12 +53,18 @@ async def delete_user_data(user_id: str):
         await db.execute("DELETE FROM server_interactions WHERE user_id = ?", (user_id,))
         await db.commit()
 
+    if user_id in user_log_cache:
+        del user_log_cache[user_id]
+
 async def reset_database():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DROP TABLE IF EXISTS server_interactions")
         await db.execute("DROP TABLE IF EXISTS user_logs")
         await db.execute("DROP TABLE IF EXISTS world_state")
         await db.commit()
+    
+    user_log_cache.clear()
+
     await init_db()
 
 #---- Functions for 'server_interactions' ----#
@@ -173,8 +184,11 @@ async def update_personality_notes(user_id: str, notes: str):
         """, (user_id, notes))
         await db.commit()
 
+    if user_id in user_log_cache:
+        del user_log_cache[user_id]
+
 async def get_personality_context(user_id: str, username: str) -> str:
-    log = await get_user_log(user_id)
+    log = await get_user_log_cached(user_id)
     if log and log[4]:
         return f"Notes about {username}: {log[4]}"
     return ""
@@ -183,7 +197,7 @@ async def maybe_queue_notes_update(user_id: str, username: str, history: list, i
     if interactions % NOTES_UPDATE_INTERVAL != 0:
         return
 
-    log = await get_user_log(user_id)
+    log = await get_user_log_cached(user_id)
     if log:
         if log[4]:
 
@@ -228,6 +242,33 @@ async def get_user_log(user_id: str):
         row = await cursor.fetchone()
         await cursor.close()
         return row
+    
+async def get_user_log_cached(user_id: str):
+    now = time.time()
+    
+    # Check if cached and still valid
+    if user_id in user_log_cache:
+        log_data, timestamp = user_log_cache[user_id]
+        if now - timestamp < USER_LOG_CACHE_TTL:
+            return log_data
+        else:
+            # Cache expired, remove it
+            del user_log_cache[user_id]
+    
+    # Fetch from database
+    log = await get_user_log(user_id)
+    
+    # Cache the result (even if None)
+    user_log_cache[user_id] = (log, now)
+    
+    return log
+
+def invalidate_user_log_cache(user_id: str):
+    if user_id in user_log_cache:
+        del user_log_cache[user_id]
+
+def clear_user_log_cache():
+    user_log_cache.clear()
 
 async def get_user_interactions(user_id: str) -> int:
     # check memory first
@@ -235,9 +276,9 @@ async def get_user_interactions(user_id: str) -> int:
         return interaction_cache[user_id]
 
     # fallback: fetch from DB
-    log = await get_user_log(user_id)
+    log = await get_user_log_cached(user_id)
     if log:
-        count = log[2]  # interactions column
+        count = log[2]
         interaction_cache[user_id] = count
         return count
 
@@ -328,15 +369,16 @@ def add_to_world_history(server_id: str, author: str, content: str):
 
 async def maybe_update_world(server_id: str):
     history = world_histories.get(server_id, [])
-    if not history:
+    if len(history) < 30:
         return
 
     now = datetime.datetime.now(datetime.timezone.utc).timestamp()
     last_update = world_update_cooldowns.get(server_id, 0)
 
-    if len(history) % 30 == 0 and now - last_update > 60:  # 1 min cooldown
+    if len(history) >= 30 and now - last_update > 60:
         await summarize_world_and_update(server_id, history)
         world_update_cooldowns[server_id] = now
+        world_histories[server_id] = []
 
 async def delete_world_entry(server_id: str, key: str):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -356,7 +398,7 @@ async def build_context(user_id: str, username: str, server_id: str | None = Non
     context_msgs = []
 
     # Personality notes
-    log = await get_user_log(user_id)
+    log = await get_user_log_cached(user_id)
     if log and log[4]:  # personality_notes column
         context_msgs.append({
             "role": "system",
