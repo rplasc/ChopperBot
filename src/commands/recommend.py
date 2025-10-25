@@ -1,7 +1,7 @@
 from discord import Interaction, Embed, Color, File, app_commands
 from src.aclient import client
 from src.personalities import get_system_content
-from src.utils.kobaldcpp_util import get_kobold_response
+from src.utils.koboldcpp_util import get_kobold_response
 from src.moderation.logging import logger
 from src.utils.message_util import chunk_message, to_discord_output
 

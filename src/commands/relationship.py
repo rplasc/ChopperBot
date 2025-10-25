@@ -2,7 +2,7 @@ import random
 from discord import Interaction, Member, Embed, Color
 from src.aclient import client
 from src.personalities import get_system_content
-from src.utils.kobaldcpp_util import get_kobold_response
+from src.utils.koboldcpp_util import get_kobold_response
 from src.utils.relationship_util import DATE_IDEAS
 from src.moderation.logging import logger
 

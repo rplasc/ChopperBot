@@ -4,7 +4,7 @@ from collections import OrderedDict
 from discord import DMChannel, File
 from src.aclient import client
 from src.personalities import get_system_content
-from src.utils.kobaldcpp_util import get_kobold_response, sanitize_bot_output
+from src.utils.koboldcpp_util import get_kobold_response, sanitize_bot_output
 from src.utils.history_util import trim_history
 from src.moderation.database import (init_db, increment_server_interaction, queue_increment, flush_user_logs_periodically,
                                     queue_user_log, maybe_queue_notes_update, get_user_interactions,
