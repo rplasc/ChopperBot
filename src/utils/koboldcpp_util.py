@@ -3,7 +3,7 @@ import re
 from src.aclient import client
 
 async def get_kobold_response(messages):
-    url = client.kobold_text_api
+    url = client.kobold_url
     payload = {
         "messages": messages,
         "temperature": 0.8,

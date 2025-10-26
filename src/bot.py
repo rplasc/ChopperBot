@@ -9,7 +9,7 @@ from src.moderation.database import (init_db, increment_server_interaction, queu
                                     interaction_cache, load_interaction_cache, maybe_update_world, add_to_world_history,
                                     close_connection_pool, flush_user_logs)
 from src.moderation.logging import init_logging_db, logger, log_chat_message
-from src.commands import admin, user, mystical, news, recommend, relationship, weather, chatgpt, images
+from src.commands import admin, user, mystical, news, recommend, relationship, weather, chatgpt
 from src.utils.message_util import to_discord_output
 from src.utils.response_generator import (detect_conversation_type, generate_and_track_response, sanitize_response)
 from src.utils.context_builder import (build_dm_context, build_server_context, format_user_message)
@@ -146,9 +146,6 @@ async def handle_server_message(message):
     # Get conversation history
     history = get_or_create_history(personality, server_id, channel_id)
 
-    # Check if message has image attachments
-    has_images = any(att.content_type and att.content_type.startswith('image/') for att in message.attachments)
-
     # Add user message
     user_msg = format_user_message(user_name, user_message, is_dm=False)
     history.append(user_msg)
@@ -157,18 +154,11 @@ async def handle_server_message(message):
     # Trim history
     history[:] = trim_history(history, max_tokens=2000)
 
-    # Respond when mentioned OR when replying with images
-    should_respond = client.user.mentioned_in(message) or (
-        has_images and message.reference and 
-        message.reference.resolved and 
-        message.reference.resolved.author == client.user
-    )
-    
-    if should_respond:
+    # Only respond when mentioned
+    if client.user.mentioned_in(message):
         await generate_and_send_response(
             message, history, user_id, user_name, 
-            server_id, channel_id, user_message,
-            has_images=has_images
+            server_id, channel_id, user_message
         )
     
     # Background tasks (non-blocking)
@@ -177,42 +167,15 @@ async def handle_server_message(message):
 
 async def generate_and_send_response(
     message, history, user_id, user_name, 
-    server_id, channel_id, user_message,
-    has_images=False
+    server_id, channel_id, user_message
 ):
-
-    image_analysis = None
-    if has_images:
-        from src.utils.vision_util import analyze_discord_attachment, is_image_attachment
-        
-        try:
-            # Get first image
-            image_att = next(att for att in message.attachments if is_image_attachment(att))
-            
-            # Analyze image with user's question
-            prompt = user_message if user_message else "Describe this image in detail."
-            image_analysis = await analyze_discord_attachment(image_att, prompt, use_personality=True)
-            
-            logger.info(f"Image analyzed in {server_id}/{channel_id}")
-            
-        except Exception as e:
-            logger.error(f"Image analysis error: {e}")
-            await message.reply("I tried to look at your image but something went wrong 👀")
-            return
-    
     # Detect conversation type
     conv_type = detect_conversation_type(user_message)
     
-    # Build context
+    # Build context (system prompt, notes, world context, history)
     messages = await build_server_context(
         history, user_id, user_name, server_id, conv_type
     )
-    
-    if image_analysis:
-        messages.append({
-            "role": "system",
-            "content": f"Image analysis: {image_analysis}"
-        })
 
     try:
         async with message.channel.typing():

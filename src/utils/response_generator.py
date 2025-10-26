@@ -96,7 +96,7 @@ async def generate_response(
     return "I'm having trouble forming a response right now. Could you try rephrasing that?"
 
 async def _call_kobold_api(messages: List[Dict], params: Dict) -> str:
-    url = client.kobold_text_api
+    url = client.kobold_url
     
     # Build full payload
     payload = {

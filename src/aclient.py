@@ -20,8 +20,7 @@ class aclient(discord.Client):
         self.is_custom_personality = False
 
         # KoboldCPP Integration
-        self.kobold_text_api = os.getenv('KOBOLD_TEXT_API')
-        self.kobold_img_api = os.getenv('KOBOLD_IMG_API')
+        self.kobold_url = os.getenv('KOBOLD_API_URL')
         
         # ChatGPT integration
         self.openAI_API_key = os.getenv('OPENAI_API_KEY')
