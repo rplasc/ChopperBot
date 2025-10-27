@@ -11,6 +11,7 @@ from src.moderation.database import (init_db, increment_server_interaction, queu
 from src.moderation.logging import init_logging_db, logger, log_chat_message
 from src.commands import admin, user, mystical, news, recommend, relationship, weather, chatgpt, images
 from src.utils.message_util import to_discord_output
+from src.utils.vision_util import analyze_discord_attachment, is_image_attachment
 from src.utils.response_generator import (detect_conversation_type, generate_and_track_response, sanitize_response)
 from src.utils.context_builder import (build_dm_context, build_server_context, format_user_message)
 
@@ -182,9 +183,7 @@ async def generate_and_send_response(
 ):
 
     image_analysis = None
-    if has_images:
-        from src.utils.vision_util import analyze_discord_attachment, is_image_attachment
-        
+    if has_images:        
         try:
             # Get first image
             image_att = next(att for att in message.attachments if is_image_attachment(att))
