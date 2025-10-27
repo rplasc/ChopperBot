@@ -12,6 +12,8 @@ DEFAULT_IMAGE_SIZE = "512x512"
 DEFAULT_STEPS = 20
 DEFAULT_CFG_SCALE = 7.0
 
+# TODO: Further testing is needed due to performance issues
+
 async def generate_image(
     prompt: str,
     negative_prompt: Optional[str] = None,

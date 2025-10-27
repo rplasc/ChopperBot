@@ -70,7 +70,7 @@ async def analyze_image(
         async with session.post(VISION_API_URL, json=payload, timeout=aiohttp.ClientTimeout(total=120)) as resp:
             if resp.status != 200:
                 error_text = await resp.text()
-                raise Exception(f"Vision API error {resp.status}: {error_text}")
+                logger.exception(f"Vision API error {resp.status}: {error_text}")
             
             data = await resp.json()
             return data["choices"][0]["message"]["content"]
@@ -82,7 +82,7 @@ async def analyze_discord_attachment(
 ) -> str:
     # Check if attachment is an image
     if not attachment.content_type or not attachment.content_type.startswith('image/'):
-        raise ValueError(f"Attachment is not an image: {attachment.content_type}")
+        logger.error(f"Attachment is not an image: {attachment.content_type}")
     
     # Download image
     image_data = await attachment.read()
@@ -135,7 +135,7 @@ async def analyze_multiple_images(
         async with session.post(VISION_API_URL, json=payload, timeout=aiohttp.ClientTimeout(total=120)) as resp:
             if resp.status != 200:
                 error_text = await resp.text()
-                raise Exception(f"Vision API error {resp.status}: {error_text}")
+                logger.exception(f"Vision API error {resp.status}: {error_text}")
             
             data = await resp.json()
             return data["choices"][0]["message"]["content"]

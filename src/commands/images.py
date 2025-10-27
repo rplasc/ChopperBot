@@ -1,4 +1,4 @@
-from discord import Interaction, Attachment, app_commands, Color, Embed, File
+from discord import Interaction, Attachment, app_commands, Color, Embed#, File
 from src.aclient import client
 from src.utils.vision_util import (is_image_attachment, get_image_metadata, analyze_discord_attachment)
 # from src.utils.image_generation_util import (generate_image_for_discord, get_available_styles, generate_with_personality_twist)
