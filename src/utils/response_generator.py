@@ -1,7 +1,8 @@
 import aiohttp
 import re
 from typing import List, Dict, Optional
-from src.personalities import get_generation_params, get_current_personality
+from src.personalities import get_generation_params
+from src.utils.personality_manager import get_server_personality
 from src.aclient import client
 from src.moderation.logging import logger
 
@@ -57,6 +58,7 @@ def check_response_quality(response: str) -> tuple[bool, Optional[str]]:
 async def generate_response(
     messages: List[Dict],
     conversation_type: str,
+    server_id: Optional[str] = None,
     max_retries: int = 2
 ) -> str:
     last_error = None
@@ -64,6 +66,8 @@ async def generate_response(
     for attempt in range(max_retries):
         try:
             # Get personality-specific parameters
+            personality = await get_server_personality(server_id)
+            params = personality.get_generation_params(conversation_type)
             params = get_generation_params(conversation_type)
             
             # Adjust temperature slightly on retries to get different output
@@ -126,6 +130,7 @@ async def _call_kobold_api(messages: List[Dict], params: Dict) -> str:
 
 async def generate_command_response(
     prompt: str,
+    server_id: Optional[str] = None,
     use_personality: bool = True,
     temperature: float = 0.9,
     max_tokens: int = 300,
@@ -135,7 +140,7 @@ async def generate_command_response(
     
     # Optionally include personality for consistent voice
     if use_personality:
-        personality = get_current_personality()
+        personality = await get_server_personality(server_id)
         if personality:
             # Use base personality without context adaptation
             system_prompt = personality.get_base_prompt()
@@ -237,15 +242,18 @@ response_tracker = ResponseTracker()
 async def generate_and_track_response(
     messages: List[Dict],
     conversation_type: str,
-    channel_key: str
+    channel_key: str,
+    server_id: Optional[str] = None
 ) -> str:
-    response = await generate_response(messages, conversation_type)
+    response = await generate_response(messages, conversation_type, server_id)
     
     # Check if response is repetitive
     if response_tracker.is_repetitive(channel_key, response):
         logger.warning(f"Repetitive response detected in {channel_key}, regenerating...")
+
         # Try one more time with higher temperature
-        params = get_generation_params(conversation_type)
+        personality = await get_server_personality(server_id)
+        params = personality.get_generation_params(conversation_type)
         params["temperature"] = min(0.95, params["temperature"] + 0.15)
         response = await _call_kobold_api(messages, params)
     

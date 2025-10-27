@@ -21,7 +21,6 @@ from src.utils.content_filter import filter_controversial, censor_curse_words
 personality_locks = {}  # {server_id: bool}
 
 def is_personality_locked(server_id: str) -> bool:
-    """Check if personality is locked for a specific server"""
     return personality_locks.get(server_id, False)
 
 # Wrapper for categories
@@ -274,43 +273,44 @@ async def personality_info(interaction: Interaction):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@admin_only_command(name="list_server_personalities", description="Show personality settings across all servers")
-@app_commands.checks.has_permissions(administrator=True)
-async def list_server_personalities_cmd(interaction: Interaction):    
-    all_personalities = personality_manager.get_all_server_personalities()
+# TODO: This is a debug command. New version coming soon.
+# @admin_only_command(name="list_server_personalities", description="Show personality settings across all servers")
+# @app_commands.checks.has_permissions(administrator=True)
+# async def list_server_personalities_cmd(interaction: Interaction):    
+#     all_personalities = personality_manager.get_all_server_personalities()
     
-    if not all_personalities:
-        await interaction.response.send_message(
-            "📋 All servers are using Default personality.",
-            ephemeral=True
-        )
-        return
+#     if not all_personalities:
+#         await interaction.response.send_message(
+#             "📋 All servers are using Default personality.",
+#             ephemeral=True
+#         )
+#         return
     
-    embed = Embed(
-        title="🌐 Server Personality Assignments",
-        description=f"Showing custom personalities for {len(all_personalities)} server(s)",
-        color=Color.blue()
-    )
+#     embed = Embed(
+#         title="🌐 Server Personality Assignments",
+#         description=f"Showing custom personalities for {len(all_personalities)} server(s)",
+#         color=Color.blue()
+#     )
     
-    for server_id, personality_name in list(all_personalities.items())[:20]:
-        try:
-            guild = client.get_guild(int(server_id))
-            server_name = guild.name if guild else f"Unknown Server"
-        except:
-            server_name = f"Server {server_id[:8]}..."
+#     for server_id, personality_name in list(all_personalities.items())[:20]:
+#         try:
+#             guild = client.get_guild(int(server_id))
+#             server_name = guild.name if guild else f"Unknown Server"
+#         except:
+#             server_name = f"Server {server_id[:8]}..."
         
-        lock_emoji = "🔒" if is_personality_locked(server_id) else "🔓"
+#         lock_emoji = "🔒" if is_personality_locked(server_id) else "🔓"
         
-        embed.add_field(
-            name=f"{lock_emoji} {server_name}",
-            value=personality_name,
-            inline=True
-        )
+#         embed.add_field(
+#             name=f"{lock_emoji} {server_name}",
+#             value=personality_name,
+#             inline=True
+#         )
     
-    if len(all_personalities) > 20:
-        embed.set_footer(text=f"...and {len(all_personalities) - 20} more servers")
+#     if len(all_personalities) > 20:
+#         embed.set_footer(text=f"...and {len(all_personalities) - 20} more servers")
     
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+#     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ============================================================================
