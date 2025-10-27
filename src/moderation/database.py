@@ -161,7 +161,9 @@ async def reset_database():
 
     await init_db()
 
-#---- Functions for 'server_interactions' ----#
+# ============================================================================
+# SERVER INTERACTIONS TRACKER
+# ============================================================================
 write_queue = asyncio.Queue()
 
 # Batching configuration
@@ -257,12 +259,14 @@ async def show_server_interactions_leaderboard(server_id: str):
     except aiosqlite.Error as e:
         print(f"Database error in show_server_interactions_leaderboard: {e}")
 
-#---- Functions for User Logs ----#
+# ============================================================================
+# USER LOGS
+# ============================================================================
 user_log_queue = {}
 interaction_cache = {}  
 
 # track how often to refresh notes
-NOTES_UPDATE_INTERVAL = 10   # every 10 messages per use
+NOTES_UPDATE_INTERVAL = 10   # every 10 messages per user
 
 async def queue_user_log(user_id: str, username: str, notes: str =None):
     record = user_log_queue.get(user_id, {
@@ -305,16 +309,24 @@ async def flush_user_logs_periodically():
         await flush_user_logs()
         await asyncio.sleep(60)
 
-async def generate_personality_notes(user_id: str, history: list):
+async def generate_personality_notes(user_id: str, username:str, history: list):
+    user_texts = [
+        h["content"] for h in history 
+        if h.get("role") == "user" and h.get("name") == username
+    ]
+    
+    if len(user_texts) < 3:
+        return None
+    
     prompt = (
-        "Analyze the following user's chat history and summarize their personality traits, "
-        "interests, and communication style in 1–2 sentences. "
-        "Keep it neutral, descriptive, and avoid any roleplay constraints.\n\n"
+        f"Analyze {username}'s chat messages and summarize their personality traits, "
+        "interests, and communication style in 1-2 sentences. "
+        "Be specific, neutral, and descriptive.\n\n"
+        f"Messages from {username}:\n"
     )
     
-    # Concatenate user messages only (ignore assistant)
-    user_texts = [h["content"] for h in history if h["role"] == "user"]
-    prompt += "\n".join(user_texts[-10:])
+    # Use last 15 messages from THIS user only
+    prompt += "\n".join(user_texts[-15:])
     
     try:
         response = await get_kobold_response([{"role": "system", "content": prompt}])
@@ -344,47 +356,55 @@ async def get_personality_context(user_id: str, username: str) -> str:
         return f"Notes about {username}: {log[4]}"
     return ""
 
-async def maybe_queue_notes_update(user_id: str, username: str, history: list, interactions: int):
+async def maybe_queue_notes_update(user_id: str, username: str, history: list, interactions: int):    
     if interactions % NOTES_UPDATE_INTERVAL != 0:
         return
 
     log = await get_user_log_cached(user_id)
-    if log:
-        if log[4]:
+    if not log:
+        return
+    
+    user_msgs = [
+        h["content"] for h in history 
+        if h.get("role") == "user" and h.get("name") == username
+    ]
+    
+    if len(user_msgs) < 3:
+        return
+    
+    recent = "\n".join(user_msgs[-10:])
+    
+    if not recent.strip():
+        return
 
-            old_notes = log[4]
+    if log[4]:
+        old_notes = log[4]
+        
+        prompt = (
+            f"Existing notes about {username}: {old_notes}\n\n"
+            f"Recent messages from {username}:\n{recent}\n\n"
+            "Update the personality summary based on new information. "
+            "Keep it 1-2 sentences, neutral, and descriptive. "
+            "If nothing new is learned, reply with 'no changes'."
+        )
 
-            user_msgs = [h["content"] for h in history if h["role"] == "user"]
-            recent = "\n".join(user_msgs[-10:]) if user_msgs else ""
+        try:
+            response = await get_kobold_response([{"role": "system", "content": prompt}])
+            cleaned = response.strip()
 
-            if not recent.strip():
+            if cleaned.lower() in ["", "no changes", "none"]:
+                return
+            
+            if not significant_change(old_notes, cleaned):
                 return
 
-            prompt = (
-                f"Existing notes about {username}: {old_notes}\n\n"
-                f"Recent chat history:\n{recent}\n\n"
-                "Update the personality summary of this user based on both the existing notes "
-                "and the new chat history. "
-                "Keep it 1–2 sentences, neutral, factual, and descriptive of traits/interests/communication style. "
-                "If nothing new is learned, reply with 'no changes'."
-            )
-
-            try:
-                response = await get_kobold_response([{"role": "system", "content": prompt}])
-                cleaned = response.strip()
-
-                if cleaned.lower() in ["", "no changes", "none"]:
-                    return  # keep old notes unchanged
-                
-                if not significant_change(old_notes, cleaned):
-                    return  # skip if not much new
-
-                await update_personality_notes(user_id, cleaned)
-                logger.info(f"[Notes Updated] {username}: {cleaned}")
-            except Exception as e:
-                logger.exception(f"[Notes Update Error] {e}")
-        else:
-            notes = await generate_personality_notes(user_id, history)
+            await update_personality_notes(user_id, cleaned)
+            logger.info(f"[Notes Updated] {username}: {cleaned}")
+        except Exception as e:
+            logger.exception(f"[Notes Update Error] {e}")
+    else:
+        notes = await generate_personality_notes(user_id, username, history)
+        if notes:
             await update_personality_notes(user_id, notes)
 
 async def get_user_log(user_id: str):
@@ -447,9 +467,13 @@ async def load_interaction_cache():
 
     print(f"[Cache Loaded] {len(interaction_cache)} users restored from DB")
 
-#---- Functions for World Context ----#
+# ============================================================================
+# WORLD MEMORY SYSTEM
+# ============================================================================
 world_histories = {} # {server_id: [ {author, content}, ... ]}
 world_update_cooldowns = {}
+WORLD_UPDATE_MESSAGE_THRESHOLD = 25
+WORLD_UPDATE_COOLDOWN = 120
 
 async def add_world_fact(server_id: str, key: str, value: str):
     async with db_pool.get_connection() as db:
@@ -462,33 +486,52 @@ async def add_world_fact(server_id: str, key: str, value: str):
         """, (server_id, key, value, datetime.datetime.now(datetime.timezone.utc)))
         await db.commit()
 
-async def get_world_context(server_id: str) -> str:
+async def get_world_context(server_id: str, max_facts: int = 15) -> str:    
     async with db_pool.get_connection() as db:
         async with db.execute("""
-            SELECT key, value FROM world_state WHERE server_id = ?
-        """, (server_id,)) as cursor:
-            facts = [f"{row[0]}: {row[1]}" async for row in cursor]
-    return "\n".join(facts) if facts else ""
+            SELECT key, value, last_updated 
+            FROM world_state 
+            WHERE server_id = ?
+            ORDER BY last_updated DESC
+            LIMIT ?
+        """, (server_id, max_facts)) as cursor:
+            facts = []
+            async for row in cursor:
+                key = row[0].replace("_", " ").title()
+                value = row[1]
+                facts.append(f"• {key}: {value}")
+    
+    if not facts:
+        return ""
+    
+    return "Current World State:\n" + "\n".join(facts)
 
 async def summarize_world_and_update(server_id: str, recent_messages: list):
-    if not recent_messages:
+    if not recent_messages or len(recent_messages) < 10:
         return
 
-    # Take the last 20 messages from the server
-    snippet = "\n".join([f"{m['author']}: {m['content']}" for m in recent_messages[-20:]])
+    # Take last 30 messages
+    snippet = "\n".join([
+        f"{m['author']}: {m['content']}" 
+        for m in recent_messages[-30:]
+    ])
 
     prompt = (
-        "Current task: Identify factual world events or states from these RP messages. "
-        "Only return clear, significant updates (e.g., battles, discoveries, status changes). "
-        "Format as short key: value pairs, like 'capital_city: Rebels breached the gates'. "
-        "If nothing meaningful occurred, reply with 'no changes'. "
-        "Do not speculate. Do not describe inactivity or filler dialogue.\n\n"
+        "Extract factual updates about the world/story/setting from these messages.\n"
+        "Focus ONLY on:\n"
+        "- Major events (battles, discoveries, arrivals/departures)\n"
+        "- Character status changes (injuries, transformations, relationships)\n"
+        "- Location changes (new places discovered, destruction)\n"
+        "- Important objects or items introduced\n\n"
+        "Format: key: value (e.g. 'throne_status: King overthrown by rebels')\n"
+        "Return 1-3 updates ONLY if significant events occurred.\n"
+        "If nothing important happened, reply with: no changes\n\n"
         f"Messages:\n{snippet}\n\n"
-        "Return 1–3 new or updated facts only."
+        "New facts:"
     )
 
     messages = [
-        {"role": "system", "content": "You maintain evolving facts about a shared fictional world."},
+        {"role": "system", "content": "You track key facts about a shared fictional world. Be specific and concise."},
         {"role": "user", "content": prompt}
     ]
 
@@ -496,17 +539,22 @@ async def summarize_world_and_update(server_id: str, recent_messages: list):
         response = await get_kobold_response(messages)
         cleaned = response.strip().lower()
 
-        if cleaned in ["", "no changes", "none"]:
-            return  # no update this round
+        if cleaned in ["", "no changes", "none", "no updates"]:
+            logger.debug(f"[World] No updates for server {server_id}")
+            return
 
-        # Parse key:value pairs safely
+        # Parse key:value pairs
+        updates_count = 0
         for line in response.splitlines():
             match = re.match(r"^\s*([^:]+)\s*:\s*(.+)$", line)
             if match:
                 key, value = match.groups()
-                await add_world_fact(server_id, key.strip(), value.strip())
+                key_clean = key.strip().lower().replace(" ", "_")
+                await add_world_fact(server_id, key_clean, value.strip())
+                updates_count += 1
 
-        logger.info(f"[World Updated] {response}")
+        if updates_count > 0:
+            logger.info(f"[World Updated] Server {server_id}: {updates_count} facts")
 
     except Exception as e:
         logger.exception(f"[World Summarizer Error] {e}")
@@ -518,18 +566,26 @@ def add_to_world_history(server_id: str, author: str, content: str):
     if len(world_histories[server_id]) > 50:
         world_histories[server_id] = world_histories[server_id][-50:]
 
-async def maybe_update_world(server_id: str):
+async def maybe_update_world(server_id: str):    
     history = world_histories.get(server_id, [])
-    if len(history) < 30:
+    
+    # Need minimum messages
+    if len(history) < WORLD_UPDATE_MESSAGE_THRESHOLD:
         return
 
     now = datetime.datetime.now(datetime.timezone.utc).timestamp()
     last_update = world_update_cooldowns.get(server_id, 0)
 
-    if len(history) >= 30 and now - last_update > 60:
-        await summarize_world_and_update(server_id, history)
-        world_update_cooldowns[server_id] = now
-        world_histories[server_id] = []
+    # Check cooldown
+    if now - last_update < WORLD_UPDATE_COOLDOWN:
+        return
+
+    # Perform update
+    await summarize_world_and_update(server_id, history)
+    world_update_cooldowns[server_id] = now
+    
+    # Keep some history for context
+    world_histories[server_id] = world_histories[server_id][-10:]
 
 async def delete_world_entry(server_id: str, key: str):
     async with db_pool.get_connection() as db:
@@ -544,7 +600,32 @@ async def delete_world_context(server_id: str):
         await db.execute("DELETE FROM world_state WHERE server_id = ?", (server_id,))
         await db.commit()
 
-#---- Context Builder for responses ----#
+async def list_world_facts(server_id: str) -> list:    
+    async with db_pool.get_connection() as db:
+        async with db.execute("""
+            SELECT key, value, last_updated 
+            FROM world_state 
+            WHERE server_id = ?
+            ORDER BY last_updated DESC
+        """, (server_id,)) as cursor:
+            return [
+                {
+                    "key": row[0],
+                    "value": row[1],
+                    "updated": row[2]
+                }
+                async for row in cursor
+            ]
+
+
+async def manual_world_update(server_id: str, key: str, value: str):    
+    key_clean = key.lower().replace(" ", "_")
+    await add_world_fact(server_id, key_clean, value)
+    logger.info(f"[World Manual Update] {server_id}: {key_clean} = {value}")
+
+# ============================================================================
+# CONTEXT BUILDER
+# ============================================================================
 async def build_context(user_id: str, username: str, server_id: str | None = None) -> list:
     context_msgs = []
 

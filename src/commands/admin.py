@@ -1,9 +1,9 @@
 from discord import Interaction, Embed, Color, Member, app_commands
 from src.aclient import client
 from src.personalities import personalities, set_custom_personality, get_current_personality
-from src.moderation.database import (add_world_fact, get_world_context, get_user_log, delete_user_data,
+from src.moderation.database import (manual_world_update, get_world_context, get_user_log, delete_user_data,
                                      delete_world_context, reset_database, delete_world_entry, get_pool_stats,
-                                     invalidate_user_log_cache)
+                                     invalidate_user_log_cache, list_world_facts)
 from src.moderation.logging import logger
 from src.utils.content_filter import filter_controversial, censor_curse_words
 
@@ -100,21 +100,51 @@ async def reset(interaction: Interaction):
     await interaction.followup.send("My memory has been wiped!")
     logger.info("Personality has been reset.")
 
-@admin_only_command(name="add_fact", description="Add or update a world fact for this server")
+@admin_only_command(name="world_set", description="Manually add or update a world fact")
 @app_commands.checks.has_permissions(administrator=True)
 async def add_fact(interaction: Interaction, key: str, value: str):
-    await add_world_fact(str(interaction.guild.id), key, value)
-    await interaction.response.send_message(f"✅ World fact updated: **{key}** → {value}", ephemeral=True)
+    await manual_world_update(str(interaction.guild.id), key, value)
+    key_display = key.replace("_", " ").title()
+    await interaction.response.send_message(f"✅ World fact updated: **{key_display}**: {value}", ephemeral=True)
 
-@admin_only_command(name="show_world", description="Show saved world context for this server")
+@admin_only_command(name="world_list", description="View all world memory facts")
 @app_commands.checks.has_permissions(administrator=True)
 async def show_world(interaction: Interaction):
-    context = await get_world_context(str(interaction.guild.id))
+    await interaction.response.defer()
+
+    facts = await list_world_facts(interaction.guild.id)
+
+    if not facts:
+        await interaction.followup.send("🌍 No world facts saved yet.")
+        return
+
+    embed = Embed(title=f"🌍 World State for {interaction.guild.name}", description="List of world facts", color=Color.green())
+
+    for fact in facts[:20]:
+            key_display = fact['key'].replace("_", " ").title()
+            embed.add_field(name=key_display, value=fact['value'], inline=False)
+        
+    if len(facts) > 20:
+        embed.set_footer(f"\n_...and {len(facts) - 20} more facts_")
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+@admin_only_command(name="world_view", description="View the world context as the bot sees it.")
+async def world_view(interaction):    
+    server_id = str(interaction.guild_id)
+    context = await get_world_context(server_id)
+    
     if not context:
-        await interaction.response.send_message("🌍 No world facts saved yet.")
-    else:
-        embed = Embed(title=f"🌍 World State for {interaction.guild.name}", description=context, color=Color.green())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(
+            "📭 No world context available yet.",
+            ephemeral=True
+        )
+        return
+    
+    await interaction.response.send_message(
+        f"**🌍 Current World Context**\n\n{context}",
+        ephemeral=True
+    )
 
 @admin_only_command(name="view_notes", description="View the long-term memory notes saved for a user.")
 @app_commands.checks.has_permissions(administrator=True)
@@ -137,14 +167,15 @@ async def delete_user(interaction: Interaction, user_id: str):
         del interaction_cache[user_id]
     await interaction.response.send_message(f"✅ Deleted data for user {user_id}", ephemeral=True)
 
-@admin_only_command(name="delete_world_entry", description="Delete a single world context entry by key")
+@admin_only_command(name="world_delete", description="Delete a specific world fact")
 @app_commands.checks.has_permissions(administrator=True)
 async def delete_world_entry_cmd(interaction: Interaction, key: str):
     server_id = str(interaction.guild.id)
-    await delete_world_entry(server_id, key)
+    key_clean = key.lower().replace(" ", "_")
+    await delete_world_entry(server_id, key_clean)
     await interaction.response.send_message(f"✅ Deleted world entry with key `{key}` for this server.", ephemeral=True)
 
-@admin_only_command(name="delete_world", description="Delete world context for this server")
+@admin_only_command(name="world_clear", description="Delete world context for this server")
 @app_commands.checks.has_permissions(administrator=True)
 async def delete_world(interaction: Interaction):
     server_id = str(interaction.guild.id)
@@ -180,7 +211,7 @@ async def reset_db(interaction: Interaction, confirm: str):
     
     logger.warning("DATABASE FULLY RESET by admin")
 
-    await interaction.response.send_message("⚠️ Database has been fully reset!", ephemeral=True)
+    await interaction.followup.send("⚠️ Database has been fully reset!", ephemeral=True)
 
 @admin_only_command(name="clear_cache", description="Clear all in-memory caches")
 @app_commands.checks.has_permissions(administrator=True)
