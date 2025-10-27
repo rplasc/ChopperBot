@@ -14,6 +14,7 @@ from src.utils.message_util import to_discord_output
 from src.utils.vision_util import analyze_discord_attachment, is_image_attachment
 from src.utils.response_generator import (detect_conversation_type, generate_and_track_response, sanitize_response)
 from src.utils.context_builder import (build_dm_context, build_server_context, format_user_message)
+from src.utils.personality_manager import get_server_personality_name
 
 # ============================================================================
 # CONFIGURATION
@@ -28,8 +29,8 @@ MAX_CACHED_DM_USERS = 25   # Separate limit for DM conversations
 
 conversation_histories_cache = OrderedDict()
 
-def get_or_create_history(personality: str, server_id: str, channel_id: str) -> list:
-    key = (personality, server_id, channel_id)
+def get_or_create_history(server_id: str, channel_id: str) -> list:
+    key = (server_id, channel_id)
     
     # If exists, move to end (mark as recently used)
     if key in conversation_histories_cache:
@@ -102,10 +103,9 @@ async def on_message(message):
 async def handle_dm_message(message):
     user_id = str(message.author.id)
     user_name = message.author.name
-    personality = getattr(client, "current_personality", "Default")
 
     # Get conversation history
-    history = get_or_create_history(personality, "dm", user_id)
+    history = get_or_create_history("dm", user_id)
 
     # Add user message
     user_msg = format_user_message(user_name, message.content, is_dm=True)
@@ -124,7 +124,8 @@ async def handle_dm_message(message):
             response = await generate_and_track_response(
                 messages, 
                 conv_type, 
-                f"dm_{user_id}"
+                f"dm_{user_id}",
+                server_id=None
             )
         
         # Add to history and send
@@ -141,11 +142,9 @@ async def handle_server_message(message):
     user_id = str(message.author.id)
     user_name = message.author.name
     user_message = message.content
-
-    personality = getattr(client, "current_personality", "Default")
     
     # Get conversation history
-    history = get_or_create_history(personality, server_id, channel_id)
+    history = get_or_create_history(server_id, channel_id)
 
     # Check if message has image attachments
     has_images = any(att.content_type and att.content_type.startswith('image/') for att in message.attachments)
@@ -219,7 +218,8 @@ async def generate_and_send_response(
             response = await generate_and_track_response(
                 messages,
                 conv_type,
-                f"server_{server_id}_{channel_id}"
+                f"server_{server_id}_{channel_id}",
+                server_id=server_id
             )
             
             # Sanitize output

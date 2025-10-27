@@ -44,6 +44,7 @@ async def send_profile(interaction: Interaction, target_user: Member):
         try:
             summary = await generate_command_response(
                 prompt=prompt,
+                server_id=interaction.guild.id,
                 use_personality=True,
                 temperature=0.85,
                 max_tokens=200

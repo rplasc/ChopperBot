@@ -22,6 +22,7 @@ async def compatibility(interaction: Interaction, user1: Member, user2: Member):
     try:
         summary = await generate_command_response(
             prompt=prompt,
+            server_id=interaction.guild.id,
             use_personality=True,
             temperature=0.75,
             max_tokens=350
@@ -83,6 +84,7 @@ async def matchmaker(interaction: Interaction, user: Member):
     try:
         summary = await generate_command_response(
             prompt=prompt,
+            server_id=interaction.guild.id,
             use_personality=True,
             temperature=0.9,
             max_tokens=350
