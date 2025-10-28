@@ -1,5 +1,5 @@
 from typing import List, Dict, Optional
-from src.personalities import get_system_content
+from src.utils.personality_manager import get_server_personality
 from src.moderation.database import get_user_log_cached, build_context as db_build_context
 from src.utils.history_util import trim_history
 
@@ -14,12 +14,11 @@ async def build_message_context(
     # Get user notes for personalization
     user_log = await get_user_log_cached(user_id)
     user_notes = user_log[4] if user_log and user_log[4] else None
+
+    personality = await get_server_personality(server_id)
     
     # Build system prompt with context awareness
-    system_content = get_system_content(
-        conversation_type=conversation_type,
-        user_notes=user_notes
-    )
+    system_content = personality.adapt_for_context(conversation_type, user_notes)
     
     messages = [{"role": "system", "content": system_content}]
     
@@ -72,7 +71,7 @@ def format_user_message(
 ) -> Dict:
     if is_dm:
         # DMs don't need name prefix since context is clear
-        return {"role": "user", "content": content}
+        return {"role": "user","name": user_name, "content": content}
     else:
         # Group chats need attribution
         return {"role": "user", "name": user_name, "content": f"{user_name}: {content}"}
@@ -129,12 +128,11 @@ async def build_hierarchical_context(
     # Get user notes
     user_log = await get_user_log_cached(user_id)
     user_notes = user_log[4] if user_log and user_log[4] else None
+
+    personality = await get_server_personality(server_id)
     
-    # Build system prompt
-    system_content = get_system_content(
-        conversation_type=conversation_type,
-        user_notes=user_notes
-    )
+    # Build system prompt with context awareness
+    system_content = personality.adapt_for_context(conversation_type, user_notes)
     
     messages = [{"role": "system", "content": system_content}]
     

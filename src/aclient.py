@@ -16,8 +16,6 @@ class aclient(discord.Client):
         self.current_channel = None
         self.activity = discord.Activity(type = discord.ActivityType.listening,name='chopperboi')
         self.isPrivate = False
-        self.current_personality = "Default"
-        self.is_custom_personality = False
 
         # KoboldCPP Integration
         self.kobold_text_api = os.getenv('KOBOLD_TEXT_API')

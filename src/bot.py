@@ -14,7 +14,6 @@ from src.utils.message_util import to_discord_output
 from src.utils.vision_util import analyze_discord_attachment, is_image_attachment
 from src.utils.response_generator import (detect_conversation_type, generate_and_track_response, sanitize_response)
 from src.utils.context_builder import (build_dm_context, build_server_context, format_user_message)
-from src.utils.personality_manager import get_server_personality_name
 
 # ============================================================================
 # CONFIGURATION

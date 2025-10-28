@@ -68,7 +68,6 @@ async def generate_response(
             # Get personality-specific parameters
             personality = await get_server_personality(server_id)
             params = personality.get_generation_params(conversation_type)
-            params = get_generation_params(conversation_type)
             
             # Adjust temperature slightly on retries to get different output
             if attempt > 0:
