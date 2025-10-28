@@ -136,7 +136,19 @@ async def init_db():
                 last_updated TEXT,
                 PRIMARY KEY (server_id, key)
             )
-        """)    
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS server_personalities (
+                server_id TEXT PRIMARY KEY,
+                personality_type TEXT NOT NULL,
+                personality_value TEXT NOT NULL,
+                is_custom BOOLEAN NOT NULL DEFAULT 0,
+                locked BOOLEAN NOT NULL DEFAULT 0,
+                last_updated TEXT
+            )
+        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_server_personalities ON server_personalities (server_id)")
+            
         await db.commit()
 
     await init_connection_pool()
@@ -466,6 +478,107 @@ async def load_interaction_cache():
                 interaction_cache[user_id] = interactions
 
     print(f"[Cache Loaded] {len(interaction_cache)} users restored from DB")
+
+# ============================================================================
+# PERSONALITY DATABASE FUNCTIONS
+# ============================================================================
+
+async def save_server_personality(
+    server_id: str, 
+    personality_type: str,
+    personality_value: str,
+    is_custom: bool = False
+):
+    async with db_pool.get_connection() as db:
+        await db.execute("""
+            INSERT INTO server_personalities 
+                (server_id, personality_type, personality_value, is_custom, last_updated)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(server_id) DO UPDATE SET
+                personality_type = excluded.personality_type,
+                personality_value = excluded.personality_value,
+                is_custom = excluded.is_custom,
+                last_updated = excluded.last_updated
+        """, (
+            server_id, 
+            personality_type, 
+            personality_value, 
+            is_custom,
+            datetime.datetime.now(datetime.timezone.utc)
+        ))
+        await db.commit()
+    
+    logger.debug(f"Saved personality for server {server_id}: {personality_value}")
+
+async def load_server_personality(server_id: str) -> dict | None:
+    async with db_pool.get_connection() as db:
+        cursor = await db.execute("""
+            SELECT personality_type, personality_value, is_custom, locked
+            FROM server_personalities 
+            WHERE server_id = ?
+        """, (server_id,))
+        row = await cursor.fetchone()
+        await cursor.close()
+        
+        if row:
+            return {
+                "type": row[0],
+                "value": row[1],
+                "is_custom": bool(row[2]),
+                "locked": bool(row[3])
+            }
+        return None
+
+async def delete_server_personality(server_id: str):
+    async with db_pool.get_connection() as db:
+        await db.execute(
+            "DELETE FROM server_personalities WHERE server_id = ?",
+            (server_id,)
+        )
+        await db.commit()
+    
+    logger.debug(f"Deleted personality for server {server_id}")
+
+async def load_all_server_personalities() -> dict:
+    personalities = {}
+    
+    async with db_pool.get_connection() as db:
+        async with db.execute("""
+            SELECT server_id, personality_type, personality_value, is_custom
+            FROM server_personalities
+        """) as cursor:
+            async for row in cursor:
+                server_id = row[0]
+                personalities[server_id] = {
+                    "type": row[1],
+                    "value": row[2],
+                    "is_custom": bool(row[3])
+                }
+    
+    return personalities
+
+async def set_server_personality_lock(server_id: str, locked: bool):
+    async with db_pool.get_connection() as db:
+        await db.execute("""
+            INSERT INTO server_personalities (server_id, personality_type, personality_value, is_custom, locked)
+            VALUES (?, 'standard', 'Default', 0, ?)
+            ON CONFLICT(server_id) DO UPDATE SET locked = excluded.locked
+        """, (server_id, locked))
+        await db.commit()
+
+async def get_server_personality_lock(server_id: str) -> bool:
+    async with db_pool.get_connection() as db:
+        cursor = await db.execute(
+            "SELECT locked FROM server_personalities WHERE server_id = ?",
+            (server_id,)
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        
+        if row:
+            return bool(row[0])
+        return False
+    
 
 # ============================================================================
 # WORLD MEMORY SYSTEM

@@ -14,6 +14,8 @@ from src.utils.message_util import to_discord_output
 from src.utils.vision_util import analyze_discord_attachment, is_image_attachment
 from src.utils.response_generator import (detect_conversation_type, generate_and_track_response, sanitize_response)
 from src.utils.context_builder import (build_dm_context, build_server_context, format_user_message)
+from src.utils.personality_manager import personality_manager
+
 
 # ============================================================================
 # CONFIGURATION
@@ -68,6 +70,7 @@ async def on_ready():
     await init_logging_db()
     await client.tree.sync()
     await load_interaction_cache()
+    await personality_manager.load_from_database()
 
     # Background tasks
     client.loop.create_task(increment_server_interaction())

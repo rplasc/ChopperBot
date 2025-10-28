@@ -12,16 +12,15 @@ from src.utils.personality_manager import (
 from src.moderation.database import (
     manual_world_update, get_world_context, get_user_log, delete_user_data,
     delete_world_context, reset_database, delete_world_entry, get_pool_stats,
-    invalidate_user_log_cache, list_world_facts
+    invalidate_user_log_cache, list_world_facts, set_server_personality_lock,
+    get_server_personality_lock
 )
 from src.moderation.logging import logger
 from src.utils.content_filter import filter_controversial, censor_curse_words
 
-# Flag for personality locking
-personality_locks = {}  # {server_id: bool}
-
-def is_personality_locked(server_id: str) -> bool:
-    return personality_locks.get(server_id, False)
+# Personality locks persist in database 
+async def is_personality_locked(server_id: str) -> bool:
+    return await get_server_personality_lock(server_id)
 
 # Wrapper for categories
 def admin_only_command(*args, **kwargs):
@@ -41,7 +40,7 @@ async def set_personality_cmd(interaction: Interaction, personality: str):
     server_id = str(interaction.guild.id)
     
     # Check if locked
-    if is_personality_locked(server_id) and not interaction.user.guild_permissions.administrator:
+    if await is_personality_locked(server_id) and not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message(
             "🔒 Personality changes are currently locked by an admin.",
             ephemeral=True
@@ -95,7 +94,7 @@ async def roleplay_cmd(interaction: Interaction, character: str):
     
     server_id = str(interaction.guild.id)
     
-    if is_personality_locked(server_id) and not interaction.user.guild_permissions.administrator:
+    if await is_personality_locked(server_id) and not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message(
             "🔒 Personality changes are currently locked by an admin.",
             ephemeral=True
@@ -151,7 +150,7 @@ async def reset_personality_cmd(interaction: Interaction):
 @app_commands.checks.has_permissions(administrator=True)
 async def lock_personality_cmd(interaction: Interaction):
     server_id = str(interaction.guild.id)
-    personality_locks[server_id] = True
+    await set_server_personality_lock(server_id, False)
     logger.info(f"Personality locked for server {server_id}")
     await interaction.response.send_message(
         "🔒 Personality changes are now locked to admins only for this server.",
@@ -162,7 +161,7 @@ async def lock_personality_cmd(interaction: Interaction):
 @app_commands.checks.has_permissions(administrator=True)
 async def unlock_personality_cmd(interaction: Interaction):
     server_id = str(interaction.guild.id)
-    personality_locks[server_id] = False
+    await set_server_personality_lock(server_id, True)
     logger.info(f"Personality unlocked for server {server_id}")
     await interaction.response.send_message(
         "🔓 Personality changes are now unlocked for this server.",

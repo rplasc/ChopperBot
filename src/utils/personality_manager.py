@@ -1,6 +1,11 @@
 import asyncio
 from typing import Optional, Dict
 from src.personalities import ChopperbotPersonality, personalities, custom_personalities
+from src.moderation.database import (
+    load_all_server_personalities,
+    save_server_personality,
+    delete_server_personality
+    )
 from src.moderation.logging import logger
 
 class ServerPersonalityManager:
@@ -9,6 +14,30 @@ class ServerPersonalityManager:
         # Format: {server_id: (personality_name_or_object, is_custom)}
         self._lock = asyncio.Lock()
         self._default = ("Default", False)
+        self._loaded = False
+    
+    async def load_from_database(self):
+        if self._loaded:
+            return
+                
+        try:
+            db_personalities = await load_all_server_personalities()
+            
+            async with self._lock:
+                for server_id, data in db_personalities.items():
+                    if data["is_custom"]:
+                        # Create custom personality object
+                        personality_obj = custom_personalities(data["value"])
+                        self.server_personalities[server_id] = (personality_obj, True)
+                    else:
+                        # Standard personality
+                        self.server_personalities[server_id] = (data["value"], False)
+            
+            self._loaded = True
+            logger.info(f"Loaded {len(db_personalities)} server personalities from database")
+            
+        except Exception as e:
+            logger.error(f"Failed to load server personalities from database: {e}")
     
     async def get_personality(self, server_id: Optional[str]) -> ChopperbotPersonality:
         
@@ -31,26 +60,49 @@ class ServerPersonalityManager:
                 return personalities.get(personality_name, personalities["Default"])
     
     async def set_personality(self, server_id: str, personality_name: str) -> bool:
-        
         if personality_name not in personalities:
             return False
         
         async with self._lock:
             self.server_personalities[server_id] = (personality_name, False)
-            logger.info(f"Set personality for server {server_id}: {personality_name}")
-            return True
+
+        # Persist to database
+        await save_server_personality(
+            server_id=server_id,
+            personality_type="standard",
+            personality_value=personality_name,
+            is_custom=False
+        )
+
+        logger.info(f"Set personality for server {server_id}: {personality_name}")
+        return True
     
     async def set_custom_personality(self, server_id: str, character: str):        
+
         async with self._lock:
             personality_obj = custom_personalities(character)
             self.server_personalities[server_id] = (personality_obj, True)
-            logger.info(f"Set custom personality for server {server_id}: {character}")
-    
-    async def reset_personality(self, server_id: str):        
+        
+        # Persist to database (store character name, not object)
+        await save_server_personality(
+            server_id=server_id,
+            personality_type="custom",
+            personality_value=character,
+            is_custom=True
+        )
+        
+        logger.info(f"Set custom personality for server {server_id}: {character}")
+
+    async def reset_personality(self, server_id: str):
+        
         async with self._lock:
             if server_id in self.server_personalities:
                 del self.server_personalities[server_id]
-                logger.info(f"Reset personality for server {server_id}")
+        
+        # Remove from database
+        await delete_server_personality(server_id)
+        
+        logger.info(f"Reset personality for server {server_id}")
     
     async def get_personality_name(self, server_id: str) -> str:        
         personality_data = self.server_personalities.get(server_id, self._default)
