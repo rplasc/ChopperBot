@@ -1,7 +1,6 @@
 import aiohttp
 import re
 from typing import List, Dict, Optional
-from src.personalities import get_generation_params
 from src.utils.personality_manager import get_server_personality
 from src.aclient import client
 from src.moderation.logging import logger
