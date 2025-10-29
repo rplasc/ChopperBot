@@ -3,6 +3,7 @@ import base64
 from typing import List, Dict
 from discord import Attachment
 from src.aclient import client
+from src.utils.personality_manager import get_server_personality
 from src.moderation.logging import logger
 
 # Vision model configuration
@@ -25,7 +26,8 @@ async def analyze_image(
     prompt: str = "Describe this image in detail.",
     use_personality: bool = True,
     temperature: float = DEFAULT_VISION_TEMPERATURE,
-    max_tokens: int = DEFAULT_VISION_MAX_TOKENS
+    max_tokens: int = DEFAULT_VISION_MAX_TOKENS,
+    server_id: int = None
 ) -> str:
     # Encode image to base64
     image_base64 = await encode_image_to_base64(image_data)
@@ -34,8 +36,7 @@ async def analyze_image(
     messages = []
     
     if use_personality:
-        from src.personalities import get_current_personality
-        personality = get_current_personality()
+        personality = await get_server_personality(server_id)
         if personality:
             messages.append({
                 "role": "system",
@@ -78,7 +79,8 @@ async def analyze_image(
 async def analyze_discord_attachment(
     attachment: Attachment,
     prompt: str = "Describe this image.",
-    use_personality: bool = True
+    use_personality: bool = True,
+    server_id: int = None
 ) -> str:
     # Check if attachment is an image
     if not attachment.content_type or not attachment.content_type.startswith('image/'):
@@ -88,12 +90,13 @@ async def analyze_discord_attachment(
     image_data = await attachment.read()
     
     # Analyze
-    return await analyze_image(image_data, prompt, use_personality)
+    return await analyze_image(image_data, prompt, use_personality, server_id=server_id)
 
 async def analyze_multiple_images(
     image_data_list: List[bytes],
     prompt: str = "Describe these images and how they relate.",
-    use_personality: bool = True
+    use_personality: bool = True,
+    server_id: int = None
 ) -> str:
     # Encode all images
     image_base64_list = [await encode_image_to_base64(img) for img in image_data_list]
@@ -101,8 +104,7 @@ async def analyze_multiple_images(
     messages = []
     
     if use_personality:
-        from src.personalities import get_current_personality
-        personality = get_current_personality()
+        personality = await get_server_personality(server_id)
         if personality:
             messages.append({
                 "role": "system",
