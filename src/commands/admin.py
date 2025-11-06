@@ -13,8 +13,10 @@ from src.moderation.database import (
     manual_world_update, get_world_context, get_user_log, delete_user_data,
     delete_world_context, reset_database, delete_world_entry, get_pool_stats,
     invalidate_user_log_cache, list_world_facts, set_server_personality_lock,
-    get_server_personality_lock, update_personality_notes, pending_notes_queue
+    get_server_personality_lock, update_personality_notes_with_username,
+    pending_notes_queue
 )
+from src.utils.koboldcpp_util import get_kobold_response
 from src.moderation.logging import logger
 from src.utils.content_filter import filter_controversial, censor_curse_words
 
@@ -551,13 +553,12 @@ async def create_notes_cmd(interaction: Interaction, message_limit: int = 500, m
             )
             
             try:
-                from src.utils.koboldcpp_util import get_kobold_response
                 
                 response = await get_kobold_response([{"role": "system", "content": prompt}])
                 notes = response.strip()
                 
                 if notes:
-                    await update_personality_notes(user_id, notes)
+                    await update_personality_notes_with_username(user_id, username, notes)
                     success_count += 1
                     logger.info(f"[Bulk Notes] Generated for {username} ({len(messages_list)} messages)")
                 else:

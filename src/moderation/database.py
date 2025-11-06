@@ -354,7 +354,7 @@ async def flush_pending_notes_periodically():
                 notes = await _try_generate_notes(user_id, username, history)
             
             if notes:
-                await update_personality_notes(user_id, notes)
+                await update_personality_notes_with_username(user_id, username, notes)
                 logger.info(f"[Flushed Pending Notes] {username}")
             else:
                 # Failed again, put it back in queue
@@ -461,6 +461,33 @@ async def update_personality_notes(user_id: str, notes: str):
     if user_id in user_log_cache:
         del user_log_cache[user_id]
 
+async def update_personality_notes_with_username(user_id: str, username: str, notes: str):
+
+    async with db_pool.get_connection() as db:
+        # Check if user exists
+        cursor = await db.execute("SELECT user_id FROM user_logs WHERE user_id = ?", (user_id,))
+        exists = await cursor.fetchone()
+        await cursor.close()
+        
+        if exists:
+            # User exists, just update notes
+            await db.execute("""
+                UPDATE user_logs 
+                SET personality_notes = ?
+                WHERE user_id = ?
+            """, (notes, user_id))
+        else:
+            # User doesn't exist, create entry with notes
+            await db.execute("""
+                INSERT INTO user_logs (user_id, username, interactions, last_seen, personality_notes)
+                VALUES (?, ?, 0, NULL, ?)
+            """, (user_id, username, notes))
+        
+        await db.commit()
+
+    if user_id in user_log_cache:
+        del user_log_cache[user_id]
+
 async def get_personality_context(user_id: str, username: str) -> str:
     log = await get_user_log_cached(user_id)
     if log and log[4]:
@@ -491,32 +518,27 @@ async def maybe_queue_notes_update(user_id: str, username: str, history: list, i
     if log[4]:
         old_notes = log[4]
         
-        prompt = (
-            f"Existing notes about {username}: {old_notes}\n\n"
-            f"Recent messages from {username}:\n{recent}\n\n"
-            "Update the personality summary based on new information. "
-            "Keep it 1-2 sentences, neutral, and descriptive. "
-            "If nothing new is learned, reply with 'no changes'."
-        )
-
-        try:
-            response = await get_kobold_response([{"role": "system", "content": prompt}])
-            cleaned = response.strip()
-
-            if cleaned.lower() in ["", "no changes", "none"]:
-                return
-            
-            if not significant_change(old_notes, cleaned):
-                return
-
-            await update_personality_notes(user_id, cleaned)
-            logger.info(f"[Notes Updated] {username}: {cleaned}")
-        except Exception as e:
-            logger.exception(f"[Notes Update Error] {e}")
+        # Try to update with fallback queueing
+        notes = await _try_update_notes(username, history, old_notes)
+        
+        if notes is None:
+            # Model unreachable, queue for later
+            await pending_notes_queue.put({
+                "user_id": user_id,
+                "username": username,
+                "history": history,
+                "is_update": True,
+                "old_notes": old_notes
+            })
+            logger.info(f"[Notes Update Queued] {username}")
+            return
+        
+        await update_personality_notes_with_username(user_id, username, notes)
+        logger.info(f"[Notes Updated] {username}: {notes}")
     else:
         notes = await generate_personality_notes(user_id, username, history)
         if notes:
-            await update_personality_notes(user_id, notes)
+            await update_personality_notes_with_username(user_id, username, notes)
 
 async def get_user_log(user_id: str):
     async with db_pool.get_connection() as db:
