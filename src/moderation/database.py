@@ -21,6 +21,10 @@ MAX_POOL_SIZE = 3
 MIN_POOL_SIZE = 2
 CONNECTION_TIMEOUT = 30
 
+# Pending notes queue for when model is unreachable
+pending_notes_queue = asyncio.Queue()
+notes_flush_task = None
+
 class ConnectionPool:
     def __init__(self, db_path: str, min_size: int = MIN_POOL_SIZE, max_size: int = MAX_POOL_SIZE):
         self.db_path = db_path
@@ -103,7 +107,8 @@ def get_pool_stats():
             "pool_size": db_pool._size,
             "available_connections": db_pool._pool.qsize(),
             "max_size": db_pool.max_size,
-            "write_queue_size": write_queue.qsize()
+            "write_queue_size": write_queue.qsize(),
+            "pending_notes_queue_size": pending_notes_queue.qsize()
         }
     return None
 
@@ -321,7 +326,47 @@ async def flush_user_logs_periodically():
         await flush_user_logs()
         await asyncio.sleep(60)
 
-async def generate_personality_notes(user_id: str, username:str, history: list):
+async def flush_pending_notes_periodically():
+    global notes_flush_task
+    
+    while True:
+        await asyncio.sleep(30)
+        
+        if pending_notes_queue.empty():
+            continue
+        
+        # Try to process one pending note
+        try:
+            pending_item = await asyncio.wait_for(
+                pending_notes_queue.get(), 
+                timeout=0.1
+            )
+            
+            user_id = pending_item["user_id"]
+            username = pending_item["username"]
+            history = pending_item["history"]
+            is_update = pending_item["is_update"]
+            
+            if is_update:
+                old_notes = pending_item.get("old_notes", "")
+                notes = await _try_update_notes(username, history, old_notes)
+            else:
+                notes = await _try_generate_notes(user_id, username, history)
+            
+            if notes:
+                await update_personality_notes(user_id, notes)
+                logger.info(f"[Flushed Pending Notes] {username}")
+            else:
+                # Failed again, put it back in queue
+                await pending_notes_queue.put(pending_item)
+                logger.debug(f"[Notes Flush Failed] Requeued for {username}")
+                
+        except asyncio.TimeoutError:
+            continue
+        except Exception as e:
+            logger.exception(f"[Notes Flush Error] {e}")
+
+async def _try_generate_notes(user_id: str, username: str, history: list) -> str | None:
     user_texts = [
         h["content"] for h in history 
         if h.get("role") == "user" and h.get("name") == username
@@ -345,9 +390,63 @@ async def generate_personality_notes(user_id: str, username:str, history: list):
         logger.debug(f"Generated notes for {user_id}.")
         return response.strip()
     except Exception as e:
-        print(f"[Notes Generation Error] {e}")
-        logger.exception(f"[Notes Generation Error] {e}")
+        logger.debug(f"[Notes Generation Failed - Model Unreachable] {user_id}")
         return None
+
+async def _try_update_notes(username: str, history: list, old_notes: str) -> str | None:
+
+    user_msgs = [
+        h["content"] for h in history 
+        if h.get("role") == "user" and h.get("name") == username
+    ]
+    
+    if len(user_msgs) < 3:
+        return None
+    
+    recent = "\n".join(user_msgs[-10:])
+    
+    if not recent.strip():
+        return None
+    
+    prompt = (
+        f"Existing notes about {username}: {old_notes}\n\n"
+        f"Recent messages from {username}:\n{recent}\n\n"
+        "Update the personality summary based on new information. "
+        "Keep it 1-2 sentences, neutral, and descriptive. "
+        "If nothing new is learned, reply with 'no changes'."
+    )
+
+    try:
+        response = await get_kobold_response([{"role": "system", "content": prompt}])
+        cleaned = response.strip()
+
+        if cleaned.lower() in ["", "no changes", "none"]:
+            return None
+        
+        if not significant_change(old_notes, cleaned):
+            return None
+
+        return cleaned
+    except Exception as e:
+        logger.debug(f"[Notes Update Failed - Model Unreachable] {username}")
+        return None
+
+async def generate_personality_notes(user_id: str, username:str, history: list):
+
+    notes = await _try_generate_notes(user_id, username, history)
+    
+    if notes is None:
+        # Queue for later if model is unreachable
+        await pending_notes_queue.put({
+            "user_id": user_id,
+            "username": username,
+            "history": history,
+            "is_update": False
+        })
+        logger.info(f"[Notes Queued] {username} - will retry when model available")
+        return None
+    
+    return notes
 
 async def update_personality_notes(user_id: str, notes: str):
     async with db_pool.get_connection() as db:
@@ -478,6 +577,49 @@ async def load_interaction_cache():
                 interaction_cache[user_id] = interactions
 
     print(f"[Cache Loaded] {len(interaction_cache)} users restored from DB")
+
+async def generate_notes_from_messages(server_id: str, channel_id: str, messages: list, min_messages: int = 50) -> dict:
+
+    # Group messages by user
+    user_messages = {}
+    for msg in messages:
+        if msg.get("role") == "user" and msg.get("name"):
+            username = msg.get("name")
+            content = msg.get("content", "")
+            
+            # Try to extract user_id if embedded (format: "username" or could be user_id)
+            # This assumes you're storing consistent identifiers
+            if username not in user_messages:
+                user_messages[username] = []
+            user_messages[username].append(content)
+    
+    # Generate notes for users meeting threshold
+    results = {}
+    for username, messages_list in user_messages.items():
+        if len(messages_list) < min_messages:
+            continue
+        
+        # Take last 50 messages for analysis
+        recent_msgs = messages_list[-50:]
+        
+        prompt = (
+            f"Analyze {username}'s chat messages and summarize their personality traits, "
+            "interests, and communication style in 1-2 sentences. "
+            "Be specific, neutral, and descriptive.\n\n"
+            f"Messages from {username}:\n"
+            + "\n".join(recent_msgs)
+        )
+        
+        try:
+            response = await get_kobold_response([{"role": "system", "content": prompt}])
+            notes = response.strip()
+            results[username] = notes
+            logger.info(f"[Bulk Notes Generated] {username}")
+        except Exception as e:
+            logger.error(f"[Bulk Notes Error] {username}: {e}")
+            results[username] = None
+    
+    return results
 
 # ============================================================================
 # PERSONALITY DATABASE FUNCTIONS

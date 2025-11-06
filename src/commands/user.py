@@ -34,8 +34,15 @@ async def send_profile(interaction: Interaction, target_user: Member):
     last_seen = log[3]
     personality_notes = log[4]
 
-    dt = datetime.fromisoformat(last_seen)
-    unix_ts = int(dt.timestamp())
+    if last_seen:
+        try:
+            dt = datetime.fromisoformat(last_seen)
+            unix_ts = int(dt.timestamp())
+            last_seen_display = f"<t:{unix_ts}:R>"
+        except (ValueError, TypeError):
+            last_seen_display = "Unknown"
+    else:
+        last_seen_display = "Never"
 
     summary = "Not enough data."
     if personality_notes:
@@ -57,7 +64,7 @@ async def send_profile(interaction: Interaction, target_user: Member):
     embed = Embed(title=f"{username}'s Profile", color=Color.blue())
     embed.set_thumbnail(url=target_user.avatar.url if target_user.avatar else target_user.default_avatar.url)
     embed.add_field(name="Interactions", value=interactions, inline=True)
-    embed.add_field(name="Last Seen", value=f"<t:{unix_ts}:R>", inline=True)
+    embed.add_field(name="Last Seen", value=last_seen_display, inline=True)
     embed.add_field(name="🤖 AI Analysis 🤖", value=summary, inline=False)
     embed.timestamp = datetime.now(timezone.utc)
 

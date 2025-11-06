@@ -7,7 +7,7 @@ from src.utils.history_util import trim_history
 from src.moderation.database import (init_db, increment_server_interaction, queue_increment, flush_user_logs_periodically,
                                     queue_user_log, maybe_queue_notes_update, get_user_interactions,
                                     interaction_cache, load_interaction_cache, maybe_update_world, add_to_world_history,
-                                    close_connection_pool, flush_user_logs)
+                                    close_connection_pool, flush_user_logs, flush_pending_notes_periodically)
 from src.moderation.logging import init_logging_db, logger, log_chat_message
 from src.commands import admin, user, mystical, news, recommend, relationship, weather, chatgpt, images
 from src.utils.message_util import to_discord_output
@@ -60,6 +60,10 @@ def extract_user_history(history: list, user_id: str = None) -> list:
                 user_msgs.append(msg)
     return user_msgs
 
+def get_channel_history(server_id: str, channel_id: str) -> list:
+    key = (server_id, channel_id)
+    return conversation_histories_cache.get(key, [])
+
 # ============================================================================
 # BOT LIFECYCLE
 # ============================================================================
@@ -75,6 +79,7 @@ async def on_ready():
     # Background tasks
     client.loop.create_task(increment_server_interaction())
     client.loop.create_task(flush_user_logs_periodically())
+    client.loop.create_task(flush_pending_notes_periodically()) 
 
     print(f'Logged in as {client.user.name}')
     logger.info(f"Logged in as {client.user.name}")

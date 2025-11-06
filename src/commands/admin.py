@@ -8,12 +8,12 @@ from src.utils.personality_manager import (
     get_server_personality_name,
     get_server_personality,
     personality_manager
-)
+) 
 from src.moderation.database import (
     manual_world_update, get_world_context, get_user_log, delete_user_data,
     delete_world_context, reset_database, delete_world_entry, get_pool_stats,
     invalidate_user_log_cache, list_world_facts, set_server_personality_lock,
-    get_server_personality_lock
+    get_server_personality_lock, update_personality_notes, pending_notes_queue
 )
 from src.moderation.logging import logger
 from src.utils.content_filter import filter_controversial, censor_curse_words
@@ -311,7 +311,6 @@ async def personality_info(interaction: Interaction):
     
 #     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-
 # ============================================================================
 # WORLD MEMORY COMMANDS
 # ============================================================================
@@ -396,10 +395,239 @@ async def view_notes(interaction: Interaction, user: Member):
     log = await get_user_log(str(user.id))
     
     if not log:
-        await interaction.followup.send("No profile found yet.")
+        await interaction.response.send_message("No profile found yet.", ephemeral=True)
         return
     
-    await interaction.response.send_message(f"{log[1]}'s Notes:\n {log[4]}", ephemeral=True)
+    if not log[4]:
+        await interaction.response.send_message(f"No notes have been generated for {user.display_name} yet.", ephemeral=True)
+        return
+    
+    embed = Embed(
+        title=f"📝 Notes for {log[1]}",
+        description=log[4],
+        color=Color.blue()
+    )
+    
+    embed.add_field(
+        name="Stats",
+        value=f"**Interactions:** {log[2]}\n**Last Seen:** {log[3]}",
+        inline=False
+    )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@admin_only_command(name="create_notes", description="Generate personality notes for active users in this channel")
+@app_commands.checks.has_permissions(administrator=True)
+async def create_notes_cmd(interaction: Interaction, message_limit: int = 500, min_user_messages: int = 50, skip_existing: bool = True):
+
+    await interaction.response.defer(ephemeral=True)
+    
+    server_id = str(interaction.guild.id)
+    channel = interaction.channel
+    
+    # Validate limits
+    if message_limit > 1000:
+        await interaction.followup.send(
+            "⚠️ Discord API limits message fetching to 1000 messages maximum.",
+            ephemeral=True
+        )
+        return
+    
+    if message_limit < min_user_messages:
+        await interaction.followup.send(
+            f"⚠️ message_limit ({message_limit}) must be at least min_user_messages ({min_user_messages})",
+            ephemeral=True
+        )
+        return
+    
+    await interaction.followup.send(
+        f"📥 Fetching up to {message_limit} messages from this channel...",
+        ephemeral=True
+    )
+    
+    try:
+        # Fetch messages directly from Discord
+        messages = []
+        async for message in channel.history(limit=message_limit):
+            # Skip bot messages
+            if message.author.bot:
+                continue
+            
+            # Skip empty messages
+            if not message.content.strip():
+                continue
+            
+            messages.append({
+                "user_id": str(message.author.id),
+                "username": message.author.name,
+                "display_name": message.author.display_name,
+                "content": message.content,
+                "timestamp": message.created_at
+            })
+        
+        if not messages:
+            await interaction.followup.send(
+                "❌ No valid messages found in this channel.",
+                ephemeral=True
+            )
+            return
+        
+        await interaction.followup.send(
+            f"📊 Fetched {len(messages)} messages. Analyzing users...",
+            ephemeral=True
+        )
+        
+        # Group messages by user
+        user_data = {}
+        for msg in messages:
+            user_id = msg["user_id"]
+            if user_id not in user_data:
+                user_data[user_id] = {
+                    "username": msg["username"],
+                    "display_name": msg["display_name"],
+                    "messages": []
+                }
+            user_data[user_id]["messages"].append(msg["content"])
+        
+        # Filter users who meet the threshold
+        qualifying_users = {
+            uid: data for uid, data in user_data.items() 
+            if len(data["messages"]) >= min_user_messages
+        }
+        
+        if not qualifying_users:
+            await interaction.followup.send(
+                f"ℹ️ No users found with at least {min_user_messages} messages.\n"
+                f"Users found: {len(user_data)}",
+                ephemeral=True
+            )
+            return
+        
+        skipped_count = 0
+        if skip_existing:
+            users_to_process = {}
+            for user_id, data in qualifying_users.items():
+                log = await get_user_log(user_id)
+                if log and log[4]:  # log[4] is personality_notes
+                    skipped_count += 1
+                    continue
+                users_to_process[user_id] = data
+            qualifying_users = users_to_process
+        
+        if not qualifying_users:
+            await interaction.followup.send(
+                f"ℹ️ All {skipped_count} qualifying users already have notes.\n"
+                f"Use `skip_existing: False` to regenerate notes for all users.",
+                ephemeral=True
+            )
+            return
+        
+        await interaction.followup.send(
+            f"🔄 Generating notes for {len(qualifying_users)} users"
+            f"{f' ({skipped_count} skipped with existing notes)' if skipped_count > 0 else ''}...\n"
+            f"This may take a minute.",
+            ephemeral=True
+        )
+        
+        # Generate notes for each qualifying user
+        success_count = 0
+        failed_count = 0
+        queued_count = 0
+        
+        for user_id, data in qualifying_users.items():
+            username = data["username"]
+            messages_list = data["messages"]
+            
+            # Take last 50 messages for analysis
+            recent_msgs = messages_list[-50:]
+            
+            prompt = (
+                f"Analyze {username}'s chat messages and summarize their personality traits, "
+                "interests, and communication style in 1-2 sentences. "
+                "Be specific, neutral, and descriptive.\n\n"
+                f"Messages from {username}:\n"
+                + "\n".join(recent_msgs)
+            )
+            
+            try:
+                from src.utils.koboldcpp_util import get_kobold_response
+                
+                response = await get_kobold_response([{"role": "system", "content": prompt}])
+                notes = response.strip()
+                
+                if notes:
+                    await update_personality_notes(user_id, notes)
+                    success_count += 1
+                    logger.info(f"[Bulk Notes] Generated for {username} ({len(messages_list)} messages)")
+                else:
+                    failed_count += 1
+                    
+            except Exception as e:
+                # Queue for retry if model is unreachable
+                logger.warning(f"[Bulk Notes] Failed for {username}, queueing: {e}")
+                
+                # Create a mock history format for queueing
+                mock_history = [
+                    {"role": "user", "name": username, "content": msg}
+                    for msg in recent_msgs
+                ]
+                
+                await pending_notes_queue.put({
+                    "user_id": user_id,
+                    "username": username,
+                    "history": mock_history,
+                    "is_update": False
+                })
+                queued_count += 1
+        
+        # Summary embed
+        embed = Embed(
+            title="✅ Notes Generation Complete",
+            description=f"Processed {len(qualifying_users)} users from {len(messages)} messages",
+            color=Color.green()
+        )
+        
+        newline = '\n'
+        embed.add_field(
+            name="Results",
+            value=f"**Successful:** {success_count} users\n"
+                  f"**Failed:** {failed_count} users\n"
+                  f"**Queued for retry:** {queued_count} users"
+                  f"{f'{newline}**Skipped (existing notes):** {skipped_count} users' if skipped_count > 0 else ''}",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="User Breakdown",
+            value=f"**Total users found:** {len(user_data)}\n"
+                  f"**Qualified (≥{min_user_messages} msgs):** {len(qualifying_users) + skipped_count}",
+            inline=False
+        )
+        
+        if success_count > 0:
+            embed.add_field(
+                name="Next Steps",
+                value="Use `/view_notes @user` to see the generated notes.",
+                inline=False
+            )
+        
+        if queued_count > 0:
+            embed.add_field(
+                name="⚠️ Queued Items",
+                value=f"{queued_count} notes were queued for retry. They'll be generated automatically when the model is available.",
+                inline=False
+            )
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        logger.info(f"[Bulk Notes] Server {server_id} - {success_count} successful, {failed_count} failed, {queued_count} queued, {skipped_count} skipped")
+        
+    except Exception as e:
+        logger.exception(f"[Create Notes Error] {e}")
+        await interaction.followup.send(
+            f"❌ Error generating notes: {str(e)}",
+            ephemeral=True
+        )
 
 @admin_only_command(name="delete_user", description="Delete all stored data for a user")
 @app_commands.checks.has_permissions(administrator=True)
@@ -492,6 +720,12 @@ async def pool_stats(interaction: Interaction):
     embed.add_field(
         name="Write Queue",
         value=f"**Pending:** {stats['write_queue_size']} interactions",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Notes Queue",
+        value=f"**Pending:** {stats.get('pending_notes_queue_size', 0)} updates",
         inline=True
     )
     
