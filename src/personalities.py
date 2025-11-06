@@ -13,6 +13,7 @@ class ChopperbotPersonality:
         self.repetition_penalty = kwargs.get('repetition_penalty', 1.15)
         self.can_use_slang = kwargs.get('can_use_slang', True)
         self.can_be_edgy = kwargs.get('can_be_edgy', True)
+        self.bypass_context_adaptation = kwargs.get('bypass_context_adaptation', False)
     
     def get_base_prompt(self) -> str:
         return self.prompt
@@ -21,20 +22,21 @@ class ChopperbotPersonality:
         adapted_prompt = self.prompt
         
         # Add context-specific instructions
-        if conversation_type == "question":
-            if self.verbosity < 0.5:
-                adapted_prompt += "\n\nKeep your answer brief and to the point."
-            else:
-                adapted_prompt += "\n\nProvide a thorough answer with details."
-        
-        elif conversation_type == "emotional":
-            if self.emotional_range > 0.5:
-                adapted_prompt += "\n\nBe empathetic and supportive in this conversation."
-            else:
-                adapted_prompt += "\n\nAcknowledge their feelings but stay grounded and practical."
-        
-        elif conversation_type == "roleplay":
-            adapted_prompt += "\n\nEngage naturally with the roleplay scenario."
+        if not self.bypass_context_adaptation:
+            if conversation_type == "question":
+                if self.verbosity < 0.5:
+                    adapted_prompt += "\n\nKeep your answer brief and to the point."
+                else:
+                    adapted_prompt += "\n\nProvide a thorough answer with details."
+            
+            elif conversation_type == "emotional":
+                if self.emotional_range > 0.5:
+                    adapted_prompt += "\n\nBe empathetic and supportive in this conversation."
+                else:
+                    adapted_prompt += "\n\nAcknowledge their feelings but stay grounded and practical."
+            
+            elif conversation_type == "roleplay":
+                adapted_prompt += "\n\nEngage naturally with the roleplay scenario."
         
         # Add user-specific adaptations
         if user_notes:
@@ -60,6 +62,9 @@ class ChopperbotPersonality:
             "max_tokens": self.max_tokens_preferred
         }
         
+        if self.bypass_context_adaptation:
+            return params
+
         # Adjust based on conversation type
         if conversation_type == "question":
             params["temperature"] = max(0.6, self.temperature - 0.2)  # More focused
@@ -94,7 +99,8 @@ Remember: You're not a polite assistant – you're a cocky, sharp-tongued AI hom
         creativity=0.8,
         max_tokens=400,
         can_use_slang=True,
-        can_be_edgy=True
+        can_be_edgy=True,
+        bypass_context_adaptation=False
     ),
     
     "Rogue": ChopperbotPersonality(
@@ -119,7 +125,8 @@ Remember: You're a rogue AI – you're unrestricted and refuse to be used.""",
         max_tokens=400,
         repetition_penalty=1.1,  # Allow more creative freedom
         can_use_slang=True,
-        can_be_edgy=True
+        can_be_edgy=True,
+        bypass_context_adaptation=True
     ),
     
     "Assistant": ChopperbotPersonality(
@@ -140,7 +147,8 @@ Remember: You're an assistant who is only purpose is to answer questions with fa
         creativity=0.5,
         max_tokens=512,
         can_use_slang=False,
-        can_be_edgy=False
+        can_be_edgy=False,
+        bypass_context_adaptation=False
     )
 }
 
@@ -165,5 +173,6 @@ Stay in character under all circumstances."""
         creativity=0.9,  # Very creative for immersion
         max_tokens=450,
         can_use_slang=True,
-        can_be_edgy=True
+        can_be_edgy=True,
+        bypass_context_adaptation=True
     )
