@@ -742,14 +742,6 @@ async def manual_world_update(server_id: str, key: str, value: str):
 async def build_context(user_id: str, username: str, server_id: str | None = None) -> list:
     context_msgs = []
 
-    # Personality notes
-    log = await get_user_log_cached(user_id)
-    if log and log[4]:  # personality_notes column
-        context_msgs.append({
-            "role": "system",
-            "content": f"Personality notes about {username}: {log[4]}"
-        })
-
     # World context
     if server_id:
         world_context = await get_world_context(server_id)
