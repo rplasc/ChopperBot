@@ -181,13 +181,28 @@ async def generate_roleplay_response(
     return await _call_kobold_api(messages, params)
 
 def sanitize_response(response: str, bot_name: str = "Chopperbot") -> str:
+
     # Keep only the first reply before bot starts imitating others
     first_line = re.split(r"\n(?:Me|User|You):", response, flags=re.IGNORECASE)[0]
     
-    # Strip bot's own name prefix if present
-    first_line = re.sub(rf"^{bot_name}:\s*", "", first_line, flags=re.IGNORECASE).strip()
+    # Step 1: Remove any markdown formatting around bot name at the start
+    first_line = re.sub(
+        rf"^[\*_\[\]]*\s*{bot_name}\s*[\*_\[\]]*\s*[:\-]\s*",
+        "",
+        first_line,
+        flags=re.IGNORECASE
+    ).strip()
     
-    # Remove multiple consecutive newlines
+    # Step 2: Handle case where markdown remains after name removal
+    first_line = re.sub(r"^[\*_]{1,3}\s*", "", first_line)
+    
+    # Step 3: Remove any orphaned colons or dashes at the start
+    first_line = re.sub(r"^[:\-\s]+", "", first_line)
+    
+    # Step 4: Clean up trailing markdown
+    first_line = re.sub(r"\s*[\*_]{1,3}$", "", first_line)
+    
+    # Step 5: Remove multiple consecutive newlines
     first_line = re.sub(r'\n{3,}', '\n\n', first_line)
     
     return first_line.strip()
