@@ -9,7 +9,7 @@ from src.moderation.database import (init_db, increment_server_interaction, queu
                                     interaction_cache, load_interaction_cache, maybe_update_world, add_to_world_history,
                                     close_connection_pool, flush_user_logs, flush_pending_notes_periodically)
 from src.moderation.logging import init_logging_db, logger, log_chat_message
-from src.commands import admin, user, mystical, news, recommend, relationship, weather, chatgpt, images
+from src.commands import admin, user, mystical, news, recommend, relationship, weather, chatgpt, images, personality
 from src.utils.message_util import to_discord_output
 from src.utils.vision_util import analyze_discord_attachment, is_image_attachment
 from src.utils.response_generator import (detect_conversation_type, generate_and_track_response, sanitize_response)
