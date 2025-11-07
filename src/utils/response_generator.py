@@ -3,7 +3,7 @@ import re
 from typing import List, Dict, Optional
 from src.utils.personality_manager import get_server_personality
 from src.utils.websearch_util import perform_web_search, format_results_for_prompt
-from src.utils.search_rate_limiter import should_trigger_web_search, sanitize_message_for_search
+from src.utils.search_rate_limiter import should_trigger_web_search, sanitize_message_for_search, search_limiter
 from src.aclient import client
 from src.moderation.logging import logger
 
@@ -265,18 +265,20 @@ async def generate_and_track_response(
     if getattr(personality, "can_search_web", False):
         user_message = messages[-1]["content"] if messages else ""
 
-
         if should_trigger_web_search(user_message, channel_key):
             clean_query = sanitize_message_for_search(user_message)
-            print(f"User: {clean_query}")
-            results = await perform_web_search(clean_query)
-            print(f"Results: {results}")
-            if results:
-                snippets = format_results_for_prompt(results)
-                messages.append({
-                    "role": "system",
-                    "content": f"Web search results:\n{snippets}\nUse these results to answer accurately."
-                })
+            logger.info(f"Web search triggered: '{clean_query}'")
+            try:
+                results = await perform_web_search(clean_query)
+                if results:
+                    snippets = format_results_for_prompt(results)
+                    messages.append({
+                        "role": "system",
+                        "content": f"Web search results:\n{snippets}\nUse these results to answer accurately."
+                    })
+                    search_limiter.record_search(channel_key)
+            except Exception as e:
+                logger.error(f"Search failed: {e}")
 
     response = await generate_response(messages, conversation_type, server_id)
     
