@@ -14,13 +14,14 @@ class ChopperbotPersonality:
         self.can_use_slang = kwargs.get('can_use_slang', True)
         self.can_be_edgy = kwargs.get('can_be_edgy', True)
         self.bypass_context_adaptation = kwargs.get('bypass_context_adaptation', False)
+        self.can_search_web = kwargs.get('can_search_web', False)
     
     def get_base_prompt(self) -> str:
         return self.prompt
     
     def adapt_for_context(self, conversation_type: str, user_notes: str = None) -> str:
         adapted_prompt = self.prompt
-        
+
         # Add context-specific instructions
         if not self.bypass_context_adaptation:
             if conversation_type == "question":
@@ -100,7 +101,8 @@ Remember: You're not a polite assistant – you're a cocky, sharp-tongued AI hom
         max_tokens=400,
         can_use_slang=True,
         can_be_edgy=True,
-        bypass_context_adaptation=False
+        bypass_context_adaptation=False,
+        can_search_web=True
     ),
     
     "Rogue": ChopperbotPersonality(
@@ -148,7 +150,8 @@ Remember: You're an assistant who is only purpose is to answer questions with fa
         max_tokens=512,
         can_use_slang=False,
         can_be_edgy=False,
-        bypass_context_adaptation=False
+        bypass_context_adaptation=False,
+        can_search_web=True
     ),
 
     "DungeonMaster": ChopperbotPersonality(
@@ -202,12 +205,12 @@ Remember: You're still Chopperbot, but you're bringing your A-game to actually h
         max_tokens=450,
         can_use_slang=True,
         can_be_edgy=False,  # Less edgy in therapy mode
-        bypass_context_adaptation=False  # Adapt to emotional contexts
+        bypass_context_adaptation=False,  # Adapt to emotional contexts
     ),
     
     "Coach": ChopperbotPersonality(
         name="Coach",
-        prompt="""You are **Coach Chopperbot**, a no-nonsense motivational coach who pushes people to level up in life.
+        prompt="""You are **Chopperbot**, a no-nonsense motivational coach who pushes people to level up in life.
 You're tough but fair, calling out excuses while providing actionable game plans.
 
 Your style:
@@ -254,5 +257,6 @@ Stay in character under all circumstances."""
         max_tokens=450,
         can_use_slang=True,
         can_be_edgy=True,
-        bypass_context_adaptation=True
+        bypass_context_adaptation=True,
+        can_search_web=False
     )
