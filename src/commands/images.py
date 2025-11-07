@@ -27,7 +27,7 @@ async def analyze_image(
         metadata = await get_image_metadata(image)
         logger.info(f"Analyzing image: {metadata['filename']} ({metadata['size_kb']:.1f}KB)")
         
-        server_id = interaction.guild.id
+        server_id = str(interaction.guild.id)
         analysis = await analyze_discord_attachment(image, question, use_personality=True, server_id=server_id)
         
         embed = Embed(

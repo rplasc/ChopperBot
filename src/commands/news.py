@@ -84,7 +84,7 @@ async def news(interaction: Interaction, outlet: str):
     try:
         summary = await generate_command_response(
             prompt=summary_prompt,
-            server_id=interaction.guild.id,
+            server_id=str(interaction.guild.id),
             use_personality=True,
             temperature=0.8,
             max_tokens=300

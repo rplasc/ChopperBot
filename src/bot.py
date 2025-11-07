@@ -196,7 +196,7 @@ async def generate_and_send_response(
             
             # Analyze image with user's question
             prompt = user_message if user_message else "Describe this image in detail."
-            image_analysis = await analyze_discord_attachment(image_att, prompt, use_personality=True, server_id=server_id)
+            image_analysis = await analyze_discord_attachment(image_att, prompt, use_personality=False, server_id=server_id)
             
             logger.info(f"Image analyzed in {server_id}/{channel_id}")
             

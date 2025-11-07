@@ -32,7 +32,7 @@ async def spirit_animal(interaction: Interaction, user: Member = None):
     try:
         result = await generate_command_response(
             prompt=prompt,
-            server_id=interaction.guild.id,
+            server_id=str(interaction.guild.id),
             use_personality=True,
             temperature=0.9,
             max_tokens=200
@@ -86,7 +86,7 @@ async def server_vibe(interaction: Interaction):
     try:
         vibe_text = await generate_command_response(
             prompt=prompt,
-            server_id=interaction.guild.id,
+            server_id=str(interaction.guild.id),
             use_personality=True,
             temperature=0.85,
             max_tokens=250
@@ -148,7 +148,7 @@ async def personality_twin(interaction: Interaction):
     try:
         result = await generate_command_response(
             prompt=prompt,
-            server_id=interaction.guild.id,
+            server_id=str(interaction.guild.id),
             use_personality=True,
             temperature=0.8,
             max_tokens=200

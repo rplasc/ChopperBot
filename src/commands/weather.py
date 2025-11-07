@@ -60,7 +60,7 @@ async def weather(
     try:
         ai_summary = await generate_command_response(
             prompt=prompt,
-            server_id=interaction.guild.id,
+            server_id=str(interaction.guild.id),
             use_personality=True,
             temperature=0.85,
             max_tokens=200

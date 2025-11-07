@@ -55,7 +55,7 @@ async def recommend(
     try:
         recommendation = await generate_command_response(
             prompt=prompt,
-            server_id=interaction.guild.id,
+            server_id=str(interaction.guild.id),
             use_personality=True,
             temperature=0.8,
             max_tokens=512
