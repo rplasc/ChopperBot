@@ -300,7 +300,7 @@ async def list_server_personalities_cmd(interaction: Interaction):
         except:
             server_name = f"Server {server_id[:8]}..."
         
-        lock_emoji = "🔒" if is_personality_locked(server_id) else "🔓"
+        lock_emoji = "🔒" if await is_personality_locked(server_id) else "🔓"
         
         embed.add_field(
             name=f"{lock_emoji} {server_name}",
