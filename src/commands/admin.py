@@ -19,6 +19,7 @@ from src.moderation.database import (
 from src.utils.koboldcpp_util import get_kobold_response
 from src.moderation.logging import logger
 from src.utils.content_filter import filter_controversial, censor_curse_words
+from src.utils.permissions import is_admin, is_owner
 
 # Personality locks persist in database 
 async def is_personality_locked(server_id: str) -> bool:
@@ -30,17 +31,6 @@ def admin_only_command(*args, **kwargs):
         func.is_admin_only = True
         return client.tree.command(*args, **kwargs)(func)
     return wrapper
-
-def is_admin():
-    async def predicate(interaction: Interaction) -> bool:
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message(
-                "You do not have permission to use this command.", 
-                ephemeral=True
-            )
-            return False
-        return True
-    return app_commands.check(predicate)
 
 
 # ============================================================================
@@ -285,44 +275,43 @@ async def personality_info(interaction: Interaction):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# TODO: This is a debug command. New version coming soon.
-# @admin_only_command(name="list_server_personalities", description="Show personality settings across all servers")
-# @is_admin()
-# async def list_server_personalities_cmd(interaction: Interaction):    
-#     all_personalities = personality_manager.get_all_server_personalities()
+@admin_only_command(name="list_server_personalities", description="Show personality settings across all servers")
+@is_owner()
+async def list_server_personalities_cmd(interaction: Interaction):    
+    all_personalities = personality_manager.get_all_server_personalities()
     
-#     if not all_personalities:
-#         await interaction.response.send_message(
-#             "📋 All servers are using Default personality.",
-#             ephemeral=True
-#         )
-#         return
+    if not all_personalities:
+        await interaction.response.send_message(
+            "📋 All servers are using Default personality.",
+            ephemeral=True
+        )
+        return
     
-#     embed = Embed(
-#         title="🌐 Server Personality Assignments",
-#         description=f"Showing custom personalities for {len(all_personalities)} server(s)",
-#         color=Color.blue()
-#     )
+    embed = Embed(
+        title="🌐 Server Personality Assignments",
+        description=f"Showing custom personalities for {len(all_personalities)} server(s)",
+        color=Color.blue()
+    )
     
-#     for server_id, personality_name in list(all_personalities.items())[:20]:
-#         try:
-#             guild = client.get_guild(int(server_id))
-#             server_name = guild.name if guild else f"Unknown Server"
-#         except:
-#             server_name = f"Server {server_id[:8]}..."
+    for server_id, personality_name in list(all_personalities.items())[:20]:
+        try:
+            guild = client.get_guild(int(server_id))
+            server_name = guild.name if guild else f"Unknown Server"
+        except:
+            server_name = f"Server {server_id[:8]}..."
         
-#         lock_emoji = "🔒" if is_personality_locked(server_id) else "🔓"
+        lock_emoji = "🔒" if is_personality_locked(server_id) else "🔓"
         
-#         embed.add_field(
-#             name=f"{lock_emoji} {server_name}",
-#             value=personality_name,
-#             inline=True
-#         )
+        embed.add_field(
+            name=f"{lock_emoji} {server_name}",
+            value=personality_name,
+            inline=True
+        )
     
-#     if len(all_personalities) > 20:
-#         embed.set_footer(text=f"...and {len(all_personalities) - 20} more servers")
+    if len(all_personalities) > 20:
+        embed.set_footer(text=f"...and {len(all_personalities) - 20} more servers")
     
-#     await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ============================================================================
 # WORLD MEMORY COMMANDS
@@ -399,7 +388,7 @@ async def delete_world(interaction: Interaction):
 
 
 # ============================================================================
-# USER MANAGEMENT COMMANDS (unchanged)
+# USER MANAGEMENT COMMANDS
 # ============================================================================
 
 @admin_only_command(name="view_notes", description="View the long-term memory notes saved for a user.")
@@ -657,7 +646,7 @@ async def delete_user(interaction: Interaction, user_id: str):
 # ============================================================================
 
 @admin_only_command(name="reset_database", description="⚠️ Reset the entire database (requires confirmation)")
-@is_admin()
+@is_owner()
 async def reset_db(interaction: Interaction, confirm: str):
     if confirm != "CONFIRM":
         await interaction.response.send_message("⚠️ You must type `CONFIRM` exactly to reset the database.", ephemeral=True)

@@ -1,7 +1,7 @@
 import os
 import asyncio
 from collections import OrderedDict
-from discord import DMChannel, File
+from discord import DMChannel, File, Interaction, app_commands
 from src.aclient import client
 from src.utils.history_util import trim_history
 from src.moderation.database import (init_db, increment_server_interaction, queue_increment, flush_user_logs_periodically,
@@ -272,6 +272,26 @@ async def update_user_stats(server_id, user_id, user_name, history):
     # Run these in background (non-blocking)
     asyncio.create_task(maybe_queue_notes_update(user_id, user_name, user_history, interactions))
     asyncio.create_task(maybe_update_world(server_id))
+
+# ============================================================================
+# GLOBAL ERROR HANDLER
+# ============================================================================
+
+@client.tree.error
+async def on_app_command_error(interaction: Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CheckFailure):
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "You do not have permission to use this command.", 
+                ephemeral=True
+            )
+    else:
+        logger.error(f"Command error: {error}")
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "An error occurred while executing the command.", 
+                ephemeral=True
+            )
 
 # ============================================================================
 # STARTUP
