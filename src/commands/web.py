@@ -24,7 +24,7 @@ async def search_command(interaction: Interaction, query: str):
         answer = await generate_command_response(
             prompt=prompt,
             server_id=interaction.guild.id,
-            use_personality=True,
+            use_personality=False,
             max_tokens=250
         )
 
