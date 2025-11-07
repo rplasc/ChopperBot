@@ -31,6 +31,17 @@ def admin_only_command(*args, **kwargs):
         return client.tree.command(*args, **kwargs)(func)
     return wrapper
 
+def is_admin():
+    async def predicate(interaction: Interaction) -> bool:
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "You do not have permission to use this command.", 
+                ephemeral=True
+            )
+            return False
+        return True
+    return app_commands.check(predicate)
+
 
 # ============================================================================
 # PERSONALITY MANAGEMENT COMMANDS
@@ -131,7 +142,7 @@ async def roleplay_cmd(interaction: Interaction, character: str):
         await interaction.followup.send(embed=embed)
 
 @admin_only_command(name="reset_personality", description="Reset this server to Default personality")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def reset_personality_cmd(interaction: Interaction):
     
     server_id = str(interaction.guild.id)
@@ -149,7 +160,7 @@ async def reset_personality_cmd(interaction: Interaction):
     )
 
 @admin_only_command(name="lock_personality", description="Lock personality changes to admins only (this server)")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def lock_personality_cmd(interaction: Interaction):
     server_id = str(interaction.guild.id)
     await set_server_personality_lock(server_id, False)
@@ -160,7 +171,7 @@ async def lock_personality_cmd(interaction: Interaction):
     )
 
 @admin_only_command(name="unlock_personality", description="Unlock personality changes (this server)")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def unlock_personality_cmd(interaction: Interaction):
     server_id = str(interaction.guild.id)
     await set_server_personality_lock(server_id, True)
@@ -200,7 +211,7 @@ async def current_personality_cmd(interaction: Interaction):
     
 # Resets "memory" and personality back to default
 @admin_only_command(name="refresh", description="Clear conversation history for THIS server")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def refresh_cmd(interaction: Interaction):    
     await interaction.response.defer()
     server_id = str(interaction.guild.id)
@@ -228,7 +239,7 @@ async def refresh_cmd(interaction: Interaction):
 # ============================================================================
 
 @admin_only_command(name="personality_info", description="Show detailed info about this server's personality")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def personality_info(interaction: Interaction):    
     server_id = str(interaction.guild.id)
     personality = await get_server_personality(server_id)
@@ -276,7 +287,7 @@ async def personality_info(interaction: Interaction):
 
 # TODO: This is a debug command. New version coming soon.
 # @admin_only_command(name="list_server_personalities", description="Show personality settings across all servers")
-# @app_commands.checks.has_permissions(administrator=True)
+# @is_admin()
 # async def list_server_personalities_cmd(interaction: Interaction):    
 #     all_personalities = personality_manager.get_all_server_personalities()
     
@@ -318,14 +329,14 @@ async def personality_info(interaction: Interaction):
 # ============================================================================
 
 @admin_only_command(name="world_set", description="Manually add or update a world fact")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def add_fact(interaction: Interaction, key: str, value: str):
     await manual_world_update(str(interaction.guild.id), key, value)
     key_display = key.replace("_", " ").title()
     await interaction.response.send_message(f"✅ World fact updated: **{key_display}**: {value}", ephemeral=True)
 
 @admin_only_command(name="world_list", description="View all world memory facts")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def show_world(interaction: Interaction):
     await interaction.response.defer()
 
@@ -364,7 +375,7 @@ async def world_view(interaction):
     )
 
 @admin_only_command(name="world_delete", description="Delete a specific world fact")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def delete_world_entry_cmd(interaction: Interaction, key: str):
     server_id = str(interaction.guild.id)
     key_clean = key.lower().replace(" ", "_")
@@ -372,7 +383,7 @@ async def delete_world_entry_cmd(interaction: Interaction, key: str):
     await interaction.response.send_message(f"✅ Deleted world entry with key `{key}` for this server.", ephemeral=True)
 
 @admin_only_command(name="world_clear", description="Delete world context for this server")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def delete_world(interaction: Interaction):
     server_id = str(interaction.guild.id)
     await delete_world_context(server_id)
@@ -392,7 +403,7 @@ async def delete_world(interaction: Interaction):
 # ============================================================================
 
 @admin_only_command(name="view_notes", description="View the long-term memory notes saved for a user.")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def view_notes(interaction: Interaction, user: Member):
     log = await get_user_log(str(user.id))
     
@@ -420,7 +431,7 @@ async def view_notes(interaction: Interaction, user: Member):
 
 
 @admin_only_command(name="create_notes", description="Generate personality notes for active users in this channel")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def create_notes_cmd(interaction: Interaction, message_limit: int = 500, min_user_messages: int = 50, skip_existing: bool = True):
 
     await interaction.response.defer(ephemeral=True)
@@ -631,7 +642,7 @@ async def create_notes_cmd(interaction: Interaction, message_limit: int = 500, m
         )
 
 @admin_only_command(name="delete_user", description="Delete all stored data for a user")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def delete_user(interaction: Interaction, user_id: str):
     await delete_user_data(user_id)
     logger.info(f"Deleted data for user {user_id}")
@@ -646,7 +657,7 @@ async def delete_user(interaction: Interaction, user_id: str):
 # ============================================================================
 
 @admin_only_command(name="reset_database", description="⚠️ Reset the entire database (requires confirmation)")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def reset_db(interaction: Interaction, confirm: str):
     if confirm != "CONFIRM":
         await interaction.response.send_message("⚠️ You must type `CONFIRM` exactly to reset the database.", ephemeral=True)
@@ -669,7 +680,7 @@ async def reset_db(interaction: Interaction, confirm: str):
     await interaction.followup.send("⚠️ Database has been fully reset!", ephemeral=True)
 
 @admin_only_command(name="clear_cache", description="Clear all in-memory caches")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def clear_cache(interaction: Interaction):
     from src.bot import conversation_histories_cache
     from src.moderation.database import clear_user_log_cache, interaction_cache
@@ -686,7 +697,7 @@ async def clear_cache(interaction: Interaction):
     )
 
 @admin_only_command(name="invalidate_user_cache", description="Invalidate cache for a specific user")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def invalidate_cache(interaction: Interaction, user: Member):
     user_id = str(user.id)
     invalidate_user_log_cache(user_id)
@@ -697,7 +708,7 @@ async def invalidate_cache(interaction: Interaction, user: Member):
     )
 
 @admin_only_command(name="pool_stats", description="Show database connection pool statistics")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def pool_stats(interaction: Interaction):
     stats = get_pool_stats()
     
@@ -745,7 +756,7 @@ async def pool_stats(interaction: Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @admin_only_command(name="admin_help", description="List of all admin commands")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin()
 async def admin_help(interaction: Interaction):
     embed = Embed(title="🛠️ Admin Help", description="The following admin commands are available:", color=Color.red())
 
