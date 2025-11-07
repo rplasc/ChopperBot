@@ -25,7 +25,8 @@ def format_results_for_prompt(results: list) -> str:
     formatted = []
     for i, r in enumerate(results[:5], start=1):
         title = r.get("title", "Untitled")
-        snippet = r.get("snippet", "")
         url = r.get("url", "")
-        formatted.append(f"{i}. {title}\n{snippet}\n({url})\n")
+        desc = r.get("desc", "")
+        content = r.get("content", "")
+        formatted.append(f"{i}. {title}\n{desc}\n{content}\n({url})\n")
     return "\n".join(formatted)

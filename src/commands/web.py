@@ -19,7 +19,7 @@ async def search_command(interaction: Interaction, query: str):
         snippets = format_results_for_prompt(results)
 
         # Step 3: Ask the text model
-        prompt = f"User question: {query}\n\nHere are web search results:\n{snippets}\n\nSummarize and answer based on these."
+        prompt = f"User question: {query}\n\nHere are web search results:\n{snippets}\n\nAnswer based on these."
 
         answer = await generate_command_response(
             prompt=prompt,
@@ -29,7 +29,7 @@ async def search_command(interaction: Interaction, query: str):
         )
 
         # Step 4: Build Embed
-        username = interaction.user.id
+        username = interaction.user.name
         
         embed = Embed(title="🌐 Web Search 🌐", color=Color.blue())
         embed.add_field(name=f"{username}'s Query: ", value=f"*{query}*", inline=False)
