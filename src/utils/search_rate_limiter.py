@@ -28,7 +28,7 @@ class SearchRateLimiter:
         self.search_history[channel_key].append(datetime.now())
 
 # Global rate limiter
-search_limiter = SearchRateLimiter(searches_per_hour=10)
+search_limiter = SearchRateLimiter(searches_per_hour=20)
 
 def sanitize_message_for_search(content: str) -> str:
 
