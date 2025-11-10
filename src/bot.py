@@ -271,7 +271,7 @@ async def update_user_stats(server_id, user_id, user_name, history):
     
     # Run these in background (non-blocking)
     asyncio.create_task(maybe_queue_notes_update(user_id, user_name, user_history, interactions))
-    asyncio.create_task(maybe_update_world(server_id))
+    # asyncio.create_task(maybe_update_world(server_id))
 
 # ============================================================================
 # GLOBAL ERROR HANDLER
