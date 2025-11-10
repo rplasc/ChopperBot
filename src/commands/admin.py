@@ -1,3 +1,5 @@
+import time
+import asyncio
 from discord import Interaction, Embed, Color, Member, app_commands
 from src.aclient import client
 from src.personalities import personalities
@@ -261,7 +263,8 @@ async def personality_info(interaction: Interaction):
         value=f"**Max Tokens:** {personality.max_tokens_preferred}\n"
               f"**Can Use Slang:** {'Yes' if personality.can_use_slang else 'No'}\n"
               f"**Can Be Edgy:** {'Yes' if personality.can_be_edgy else 'No'}\n"
-              f"**Repetition Penalty:** {personality.repetition_penalty}",
+              f"**Repetition Penalty:** {personality.repetition_penalty}\n"
+              f"**Can Search Web:** {'Yes' if personality.can_search_web else 'No'}",
         inline=True
     )
     
@@ -644,6 +647,252 @@ async def delete_user(interaction: Interaction, user_id: str):
 # ============================================================================
 # SYSTEM MANAGEMENT COMMANDS
 # ============================================================================
+
+async def check_kobold_text_api() -> dict:
+    import aiohttp
+    
+    start = time.time()
+    
+    try:
+        payload = {
+            "messages": [{"role": "user", "content": "test"}],
+            "max_tokens": 1,
+            "temperature": 0.1
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                client.kobold_text_api,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                latency = round((time.time() - start) * 1000, 2)
+                
+                if resp.status == 200:
+                    return {
+                        "ok": True,
+                        "status": "Online",
+                        "latency": latency
+                    }
+                else:
+                    return {
+                        "ok": False,
+                        "status": f"Error {resp.status}",
+                        "latency": latency
+                    }
+    except asyncio.TimeoutError:
+        return {
+            "ok": False,
+            "status": "Timeout",
+            "latency": ">10000"
+        }
+    except Exception as e:
+        logger.error(f"KoboldCPP health check failed: {e}")
+        return {
+            "ok": False,
+            "status": "Unreachable",
+            "latency": "N/A"
+        }
+
+
+async def check_web_search_api() -> dict:
+    import aiohttp
+    
+    start = time.time()
+    
+    try:
+        # Simple search query
+        payload = {"q": "test"}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                client.kobold_web_api,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                latency = round((time.time() - start) * 1000, 2)
+                
+                if resp.status == 200:
+                    return {
+                        "ok": True,
+                        "status": "Online",
+                        "latency": latency
+                    }
+                else:
+                    return {
+                        "ok": False,
+                        "status": f"Error {resp.status}",
+                        "latency": latency
+                    }
+    except asyncio.TimeoutError:
+        return {
+            "ok": False,
+            "status": "Timeout",
+            "latency": ">10000"
+        }
+    except Exception as e:
+        logger.error(f"Web search health check failed: {e}")
+        return {
+            "ok": False,
+            "status": "Unreachable",
+            "latency": "N/A"
+        }
+
+@admin_only_command(name="health", description="Check bot health and system status")
+@is_admin()
+async def health_check(interaction: Interaction):
+    await interaction.response.defer(ephemeral=True)
+    
+    start_time = time.time()
+    
+    embed = Embed(
+        title="🏥 Bot Health Check",
+        description=f"Status report for {client.user.name}",
+        color=Color.green()
+    )
+    
+    # 1. Discord API Latency
+    latency_ms = round(client.latency * 1000, 2)
+    latency_status = "🟢" if latency_ms < 200 else "🟡" if latency_ms < 500 else "🔴"
+    
+    embed.add_field(
+        name="📡 Discord Connection",
+        value=f"{latency_status} **Latency:** {latency_ms}ms\n"
+              f"✅ **Status:** Connected",
+        inline=True
+    )
+    
+    # 2. Database Connection Pool
+    pool_stats = get_pool_stats()
+    if pool_stats:
+        pool_health = pool_stats['available_connections'] > 0
+        pool_status = "🟢" if pool_health else "🔴"
+        
+        embed.add_field(
+            name="💾 Database Pool",
+            value=f"{pool_status} **Active:** {pool_stats['pool_size']}/{pool_stats['max_size']}\n"
+                  f"📊 **Available:** {pool_stats['available_connections']}\n"
+                  f"⏳ **Queue:** {pool_stats['write_queue_size']}",
+            inline=True
+        )
+    else:
+        embed.add_field(
+            name="💾 Database Pool",
+            value="🔴 **Status:** Not initialized",
+            inline=True
+        )
+    
+    # 3. KoboldCPP Text API
+    kobold_text_status = await check_kobold_text_api()
+    kobold_icon = "🟢" if kobold_text_status["ok"] else "🔴"
+    
+    embed.add_field(
+        name="🤖 Text Generation API",
+        value=f"{kobold_icon} **Status:** {kobold_text_status['status']}\n"
+              f"⏱️ **Response:** {kobold_text_status['latency']}ms",
+        inline=True
+    )
+    
+    # 4. KoboldCPP Web Search API (if configured)
+    if client.kobold_web_api:
+        web_search_status = await check_web_search_api()
+        web_icon = "🟢" if web_search_status["ok"] else "🔴"
+        
+        embed.add_field(
+            name="🌐 Web Search API",
+            value=f"{web_icon} **Status:** {web_search_status['status']}\n"
+                  f"⏱️ **Response:** {web_search_status['latency']}ms",
+            inline=True
+        )
+    else:
+        embed.add_field(
+            name="🌐 Web Search API",
+            value="⚪ **Status:** Not configured",
+            inline=True
+        )
+    
+    # 5. Cache Statistics
+    from src.bot import conversation_histories_cache
+    from src.moderation.database import user_log_cache, interaction_cache
+    
+    embed.add_field(
+        name="🗂️ Cache Status",
+        value=f"💬 **Conversations:** {len(conversation_histories_cache)}\n"
+              f"👤 **User Logs:** {len(user_log_cache)}\n"
+              f"📈 **Interactions:** {len(interaction_cache)}",
+        inline=True
+    )
+    
+    # 6. Background Tasks
+    from src.moderation.database import pending_notes_queue
+    
+    tasks_healthy = True
+    tasks_info = []
+    
+    # Check if write queue is processing
+    if pool_stats and pool_stats['write_queue_size'] > 100:
+        tasks_healthy = False
+        tasks_info.append("⚠️ High write queue")
+    
+    # Check pending notes queue
+    notes_queue_size = pending_notes_queue.qsize()
+    if notes_queue_size > 50:
+        tasks_info.append(f"⚠️ {notes_queue_size} pending notes")
+    
+    task_icon = "🟢" if tasks_healthy else "🟡"
+    task_status = "All systems operational" if tasks_healthy else "\n".join(tasks_info)
+    
+    embed.add_field(
+        name="⚙️ Background Tasks",
+        value=f"{task_icon} **Status:** {task_status}\n"
+              f"📝 **Notes Queue:** {notes_queue_size}",
+        inline=True
+    )
+    
+    # 7. Personality System
+    from src.utils.personality_manager import personality_manager
+    
+    total_servers = len(personality_manager.get_all_server_personalities())
+    
+    embed.add_field(
+        name="🎭 Personality System",
+        value=f"🟢 **Status:** Loaded\n"
+              f"🌍 **Servers:** {total_servers} custom",
+        inline=True
+    )
+    
+    # 8. World Memory System
+    from src.moderation.database import world_histories
+    
+    active_worlds = len(world_histories)
+    
+    embed.add_field(
+        name="🌍 World Memory",
+        value=f"🟢 **Status:** Active\n"
+              f"📚 **Tracking:** {active_worlds} servers",
+        inline=True
+    )
+    
+    # Calculate total check time
+    total_time = round((time.time() - start_time) * 1000, 2)
+    
+    # Overall health determination
+    all_critical_ok = (
+        latency_ms < 1000 and
+        kobold_text_status["ok"] and
+        (pool_stats is not None)
+    )
+    
+    overall_color = Color.green() if all_critical_ok else Color.yellow()
+    embed.color = overall_color
+    
+    embed.set_footer(text=f"Health check completed in {total_time}ms")
+    
+    # Add timestamp
+    embed.timestamp = interaction.created_at
+    
+    await interaction.followup.send(embed=embed, ephemeral=True)
+    logger.info(f"Health check performed by {interaction.user.name}")
 
 @admin_only_command(name="reset_database", description="⚠️ Reset the entire database (requires confirmation)")
 @is_owner()
