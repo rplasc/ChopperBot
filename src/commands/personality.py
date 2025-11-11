@@ -66,7 +66,7 @@ async def server_vibe(interaction: Interaction):
     
     # Get notes for top 5 users
     user_summaries = []
-    for user_id in top_users[:5]:
+    for user_id, count in top_users[:5]:
         log = await get_user_log(str(user_id))
         if log and log[4]:
             user_summaries.append(f"- {log[1]}: {log[4]}")
@@ -125,7 +125,7 @@ async def personality_twin(interaction: Interaction):
     
     # Get notes for other users
     candidates = []
-    for other_user_id in top_users:
+    for other_user_id, count in top_users:
         if str(other_user_id) == user_id:
             continue
         
@@ -173,14 +173,16 @@ async def trait_finder(interaction: Interaction, trait: str):
 
     server_id = str(interaction.guild.id)
     top_users = await show_server_interactions_leaderboard(server_id)
+    print(top_users)
     
-    # Get notes for other users
+    # Get notes for users
     candidates = []
-    for user_id in top_users:
+    for user_id, count in top_users:
         
         log = await get_user_log(str(user_id))
         if log and log[4]:
             candidates.append(f"{log[1]}: {log[4]}")
+        print(candidates)
     
     if len(candidates) < 2:
         await interaction.followup.send(
@@ -247,7 +249,7 @@ async def therapy(interaction: Interaction, problem: str):
         
         embed = Embed(
             title="🛋️ Dr. ChopperBot's Therapy Session 🛋️",
-            description=f"**Patient:** {interaction.user.display_name}\n**Issue:** {problem}\n\n**Dr. Bot's Analysis:**\n{advice}",
+            description=f"**Patient:** {interaction.user.display_name}\n**Issue:** {problem}\n\n**Dr. ChopperBot's Analysis:**\n{advice}",
             color=Color.purple()
         )
         embed.set_footer(text="⚠️ Not actual medical advice. Consult a real therapist.")
@@ -256,7 +258,7 @@ async def therapy(interaction: Interaction, problem: str):
         
     except Exception as e:
         logger.exception(f"[Therapy Error] {e}")
-        await interaction.followup.send("Dr. Bot is on vacation! 🏖️")
+        await interaction.followup.send("Dr. ChopperBot is on vacation! 🏖️")
 
 @client.tree.command(name="arrest", description="Arrest someone for their crimes")
 async def arrest(interaction: Interaction, criminal: Member, crime: str):
@@ -272,7 +274,7 @@ async def arrest(interaction: Interaction, criminal: Member, crime: str):
         personality = f"\nKnown behavior: {log[4]}"
     
     # Random sentence
-    years = random.randint(1, 999)
+    years = random.randint(1, 100)
     
     prompt = (
         f"Officer {interaction.user.display_name} has arrested {criminal.display_name} "
@@ -329,7 +331,7 @@ async def expose(interaction: Interaction, target: Member):
         expose_text = await generate_command_response(
             prompt=prompt,
             server_id=str(interaction.guild.id),
-            use_personality=True,
+            use_personality=False,
             temperature=1.0,
             max_tokens=350
         )
