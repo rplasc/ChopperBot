@@ -173,7 +173,6 @@ async def trait_finder(interaction: Interaction, trait: str):
 
     server_id = str(interaction.guild.id)
     top_users = await show_server_interactions_leaderboard(server_id)
-    print(top_users)
     
     # Get notes for users
     candidates = []
@@ -182,7 +181,6 @@ async def trait_finder(interaction: Interaction, trait: str):
         log = await get_user_log(str(user_id))
         if log and log[4]:
             candidates.append(f"{log[1]}: {log[4]}")
-        print(candidates)
     
     if len(candidates) < 2:
         await interaction.followup.send(
