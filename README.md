@@ -1,2 +1,2 @@
 # ChopperBot
-A Discord bot with integrated OpenAI support written by Raul Plascencia and Gabriel Jimenez.
+A Discord bot with integrated OpenAI and KoboldCPP support developed by Raul Plascencia.
