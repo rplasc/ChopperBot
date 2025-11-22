@@ -20,6 +20,7 @@ class aclient(discord.Client):
         # KoboldCPP Integration
         self.kobold_text_api = os.getenv('KOBOLD_TEXT_API')
         self.kobold_web_api = os.getenv('KOBOLD_WEB_API')
+        self.kobold_img_api = os.getenv('KOBOLD_IMG_API')
         
         # ChatGPT integration
         self.openAI_API_key = os.getenv('OPENAI_API_KEY')

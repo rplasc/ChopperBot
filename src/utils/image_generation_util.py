@@ -7,12 +7,10 @@ from src.aclient import client
 from src.moderation.logging import logger
 
 # Image generation configuration
-IMAGE_GEN_API_URL = client.kobold_img_api
+IMAGE_GEN_BASE_URL = client.kobold_img_api
 DEFAULT_IMAGE_SIZE = "512x512"
 DEFAULT_STEPS = 20
 DEFAULT_CFG_SCALE = 7.0
-
-# TODO: Further testing is needed due to performance issues
 
 async def generate_image(
     prompt: str,
@@ -22,32 +20,34 @@ async def generate_image(
     cfg_scale: float = DEFAULT_CFG_SCALE,
     seed: Optional[int] = None
 ) -> bytes:
-
+    
+    # Parse size into width and height
+    width, height = parse_size(size)
+    
     payload = {
         "prompt": prompt,
-        "size": size,
-        "n": 1,  # Number of images
-        "response_format": "b64_json"
+        "width": width,
+        "height": height,
+        "steps": steps,
+        "cfg_scale": cfg_scale,
+        "sampler_name": "Euler a"
     }
     
     # Add optional parameters
     if negative_prompt:
         payload["negative_prompt"] = negative_prompt
     
-    if steps:
-        payload["steps"] = steps
-    
-    if cfg_scale:
-        payload["cfg_scale"] = cfg_scale
-    
     if seed is not None:
         payload["seed"] = seed
     
     logger.debug(f"Generating image: {prompt[:50]}...")
     
+    # Use txt2img endpoint
+    endpoint = f"{IMAGE_GEN_BASE_URL}/txt2img"
+    
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            IMAGE_GEN_API_URL, 
+            endpoint, 
             json=payload,
             timeout=aiohttp.ClientTimeout(total=300)  # 5 min for image gen
         ) as resp:
@@ -57,12 +57,111 @@ async def generate_image(
             
             data = await resp.json()
             
-            # Decode base64 image
-            image_base64 = data["data"][0]["b64_json"]
-            image_bytes = base64.b64decode(image_base64)
+            # KoboldCPP returns images as base64 in "images" array
+            if "images" in data and len(data["images"]) > 0:
+                image_base64 = data["images"][0]
+                image_bytes = base64.b64decode(image_base64)
+            else:
+                raise Exception("No image data in response")
             
             logger.info(f"Generated image: {len(image_bytes)} bytes")
             return image_bytes
+
+async def generate_image_from_image(
+    prompt: str,
+    init_image_base64: str,
+    negative_prompt: Optional[str] = None,
+    size: str = DEFAULT_IMAGE_SIZE,
+    steps: int = DEFAULT_STEPS,
+    cfg_scale: float = DEFAULT_CFG_SCALE,
+    denoising_strength: float = 0.6,
+    seed: Optional[int] = None,
+    resize_input: bool = True,
+) -> bytes:
+    
+    # Parse size into width and height
+    width, height = parse_size(size)
+
+    # Validate and adjust dimensions
+    width, height = validate_size(width, height)
+    
+    # Optionally resize the input image to match target dimensions
+    if resize_input:
+        init_image_base64 = await resize_image_base64(init_image_base64, width, height)
+
+    payload = {
+        "prompt": prompt,
+        "init_images": [init_image_base64],
+        "width": width,
+        "height": height,
+        "steps": steps,
+        "cfg_scale": cfg_scale,
+        "denoising_strength": denoising_strength,
+        "sampler_name": "Euler a"
+    }
+    
+    if negative_prompt:
+        payload["negative_prompt"] = negative_prompt
+    
+    if seed is not None:
+        payload["seed"] = seed
+    
+    logger.debug(f"Generating image from image: {prompt[:50]}...")
+    
+    # Use img2img endpoint
+    endpoint = f"{IMAGE_GEN_BASE_URL}/img2img"
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            endpoint,
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=300)
+        ) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                raise Exception(f"Image transformation error {resp.status}: {error_text}")
+            
+            data = await resp.json()
+            
+            if "images" in data and len(data["images"]) > 0:
+                image_base64 = data["images"][0]
+                image_bytes = base64.b64decode(image_base64)
+            else:
+                raise Exception("No image data in response")
+            
+            logger.info(f"Generated image from image: {len(image_bytes)} bytes")
+
+            image_io = BytesIO(image_bytes)
+            return File(image_io, filename="generated.png")
+
+async def interrogate_image(image_base64: str, model: str = "clip") -> str:
+    
+    payload = {
+        "image": image_base64,
+        "model": model
+    }
+    
+    logger.debug(f"Interrogating image with model: {model}")
+    
+    # Use interrogate endpoint
+    endpoint = f"{IMAGE_GEN_BASE_URL}/interrogate"
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            endpoint,
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=60)
+        ) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                raise Exception(f"Image interrogation error {resp.status}: {error_text}")
+            
+            data = await resp.json()
+            
+            if "caption" in data:
+                return data["caption"]
+            else:
+                raise Exception("No caption in response")
 
 async def generate_image_for_discord(
     prompt: str,
@@ -70,7 +169,7 @@ async def generate_image_for_discord(
     size: str = DEFAULT_IMAGE_SIZE,
     filename: str = "generated.png"
 ) -> File:
-
+    
     image_bytes = await generate_image(prompt, negative_prompt, size)
     
     # Convert to Discord File
@@ -78,7 +177,7 @@ async def generate_image_for_discord(
     return File(image_io, filename=filename)
 
 async def enhance_prompt(prompt: str) -> str:
-
+    
     # Add quality enhancers if not already present
     quality_tags = [
         "high quality", "detailed", "8k", "professional",
@@ -97,7 +196,7 @@ async def generate_with_personality_twist(
     base_prompt: str,
     use_personality_style: bool = True
 ) -> str:
-
+    
     if not use_personality_style:
         return await enhance_prompt(base_prompt)
     
@@ -128,7 +227,7 @@ async def generate_image_variations(
     num_variations: int = 3,
     size: str = DEFAULT_IMAGE_SIZE
 ) -> List[bytes]:
-
+    
     variations = []
     
     for i in range(num_variations):
@@ -170,7 +269,7 @@ async def generate_with_style(
     style: str = "realistic",
     negative_prompt: Optional[str] = None
 ) -> bytes:
-
+    
     # Get style tags
     style_tags = PRESET_STYLES.get(style.lower(), "")
     
@@ -196,13 +295,9 @@ async def text_to_image_with_analysis(
     
     analysis = None
     if analyze_result:
-        # Analyze the generated image
-        from src.utils.vision_util import analyze_image
-        analysis = await analyze_image(
-            image_bytes,
-            "Describe what you see in this generated image.",
-            use_personality=False
-        )
+        # Analyze the generated image using interrogate
+        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+        analysis = await interrogate_image(image_base64)
     
     return image_bytes, analysis
 
@@ -255,10 +350,10 @@ async def generate_with_options(
     # Adjust steps based on quality
     steps_map = {
         "draft": 15,
-        "standard": 25,
-        "high": 40
+        "standard": 20,
+        "high": 30
     }
-    steps = steps_map.get(quality, 25)
+    steps = steps_map.get(quality, 20)
     
     # Apply style if specified
     if style:
@@ -274,3 +369,51 @@ async def generate_with_options(
         steps=steps,
         seed=seed
     )
+
+async def resize_image_base64(image_base64: str, target_width: int, target_height: int) -> str:
+    from PIL import Image
+    
+    # Decode base64 to image
+    image_bytes = base64.b64decode(image_base64)
+    image = Image.open(BytesIO(image_bytes))
+    
+    # Convert to RGB if needed
+    if image.mode not in ('RGB', 'RGBA'):
+        image = image.convert('RGB')
+    elif image.mode == 'RGBA':
+        # Create white background for transparent images
+        background = Image.new('RGB', image.size, (255, 255, 255))
+        background.paste(image, mask=image.split()[3])
+        image = background
+    
+    # Calculate aspect ratios
+    original_ratio = image.width / image.height
+    target_ratio = target_width / target_height
+    
+    # Resize maintaining aspect ratio, then crop to fit
+    if original_ratio > target_ratio:
+        # Image is wider, fit to height
+        new_height = target_height
+        new_width = int(target_height * original_ratio)
+    else:
+        # Image is taller, fit to width
+        new_width = target_width
+        new_height = int(target_width / original_ratio)
+    
+    # Resize using high-quality Lanczos resampling
+    image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    
+    # Crop to exact target size (center crop)
+    left = (new_width - target_width) // 2
+    top = (new_height - target_height) // 2
+    right = left + target_width
+    bottom = top + target_height
+    image = image.crop((left, top, right, bottom))
+    
+    # Convert back to base64
+    buffer = BytesIO()
+    image.save(buffer, format='PNG')
+    resized_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+    
+    logger.debug(f"Resized image to {target_width}x{target_height}")
+    return resized_base64
