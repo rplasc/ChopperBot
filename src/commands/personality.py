@@ -350,7 +350,7 @@ async def expose(interaction: Interaction, target: Member):
         await interaction.followup.send("The lawyers shut us down! ⚖️")
 
 @client.tree.command(name="lawsuit", description="Take someone to court")
-async def arrest(interaction: Interaction, defendent: Member, complaint: str, amount: int = 0):
+async def lawsuit(interaction: Interaction, defendent: Member, complaint: str, amount: int = 0):
     await interaction.response.defer()
     
     if defendent.bot:
@@ -382,7 +382,7 @@ async def arrest(interaction: Interaction, defendent: Member, complaint: str, am
         f"{interaction.user.display_name} has filed a lawsuit against {defendent.display_name} "
         f"with this compaint: {complaint}\n"
         f"{personality}\n\n"
-        f"Write a dramatic judge's statement (3-4 sentences) explaining why they're {verdict}. "
+        f"As Judge ChopperBot, write a dramatic judge's statement (3-4 sentences) explaining why they're {verdict}. "
         f"Be funny and absurd. The plantiff is to be awarded to ${amount}."
     )
     
@@ -398,7 +398,7 @@ async def arrest(interaction: Interaction, defendent: Member, complaint: str, am
         embed = Embed(
             title="⚖️ Trial ⚖️",
             description=statement,
-            color=Color.red()
+            color=Color.dark_orange()
         )
 
         embed.add_field(name="Defendent", value=defendent.display_name, inline=True)
