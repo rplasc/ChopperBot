@@ -25,12 +25,3 @@ async def fact_check(interaction: Interaction, statement: str):
     embed.timestamp = datetime.now(timezone.utc)
 
     await interaction.response.send_message(embed=embed)
-
-@client.tree.command(name="translate", description="Translate a quote using IsraelGPT")
-async def translate_cmd(interaction: Interaction, quote: str):
-    embed = Embed(title="Translator", color=Color.blue())
-    embed.add_field(name="Original Text:", value=quote, inline=False)
-    embed.add_field(name="🤖 IsraelGPT's Translation:", value="🇮🇱 🔯 **GLORY TO THE STATE OF ISRAEL!** 🔯 🇮🇱", inline=False)
-    embed.set_image(url="https://cdn.discordapp.com/attachments/906441689114214420/1441630489818697800/0TqBTY7f3JALqPkAF8NgoAa2BZq4bgkKkAAAAASUVORK5CYII.png?ex=69227e84&is=69212d04&hm=0f5fcc571273f3d5944ffc626baee18756b1c09a035d3c8efc306663b05552e0&")
-
-    await interaction.response.send_message(embed=embed)
