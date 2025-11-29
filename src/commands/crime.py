@@ -27,7 +27,7 @@ async def arrest(interaction: Interaction, criminal: Member, crime: str):
         personality = f"\nKnown behavior: {log[4]}"
     
     # Random sentence
-    years = random.randint(1, 999)
+    years = random.randint(1, 99)
     
     # DYNAMIC OUTCOMES with weighted probabilities
     outcomes = [
@@ -169,7 +169,7 @@ async def arrest(interaction: Interaction, criminal: Member, crime: str):
         report = await generate_command_response(
             prompt=prompt,
             server_id=interaction.guild.id,
-            use_personality=True,
+            use_personality=False,
             temperature=1.0,  # Higher temp for more chaos
             max_tokens=300
         )
@@ -226,7 +226,7 @@ async def lawsuit(interaction: Interaction, defendant: Member, complaint: str, a
     
     # Calculate amounts based on outcome
     if amount <= 0:
-        amount = random.randint(100, 5000)
+        amount = random.randint(1, 9999)
     
     if outcome == "guilty":
         # NORMAL WIN - Defendant pays
