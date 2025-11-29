@@ -1,4 +1,3 @@
-import random
 from discord import Interaction, Embed, Color, Member
 from src.aclient import client
 from src.moderation.database import get_user_log, show_server_interactions_leaderboard
@@ -258,56 +257,6 @@ async def therapy(interaction: Interaction, problem: str):
         logger.exception(f"[Therapy Error] {e}")
         await interaction.followup.send("Dr. ChopperBot is on vacation! 🏖️")
 
-@client.tree.command(name="arrest", description="Arrest someone for their crimes")
-async def arrest(interaction: Interaction, criminal: Member, crime: str):
-    await interaction.response.defer()
-    
-    if criminal.bot:
-        await interaction.followup.send("Bots are above the law! 🤖⚖️")
-        return
-    
-    log = await get_user_log(str(criminal.id))
-    personality = ""
-    if log and log[4]:
-        personality = f"\nKnown behavior: {log[4]}"
-    
-    # Random sentence
-    years = random.randint(1, 100)
-    
-    prompt = (
-        f"Officer {interaction.user.display_name} has arrested {criminal.display_name} "
-        f"for the crime of: {crime}\n"
-        f"{personality}\n\n"
-        f"Write a dramatic police report (3-4 sentences) explaining why they're guilty. "
-        f"Be funny and absurd. They've been sentenced to {years} years."
-    )
-    
-    try:
-        report = await generate_command_response(
-            prompt=prompt,
-            server_id=str(interaction.guild.id),
-            use_personality=False,
-            temperature=0.95,
-            max_tokens=250
-        )
-        
-        embed = Embed(
-            title="🚨 ARREST WARRANT 🚨",
-            description=report,
-            color=Color.red()
-        )
-        embed.add_field(name="Criminal", value=criminal.display_name, inline=True)
-        embed.add_field(name="Crime", value=crime, inline=True)
-        embed.add_field(name="Sentence", value=f"{years} years in jail", inline=True)
-        embed.set_thumbnail(url=criminal.avatar.url if criminal.avatar else criminal.default_avatar.url)
-        embed.set_footer(text=f"Arrested by Officer {interaction.user.display_name}")
-        
-        await interaction.followup.send(embed=embed)
-        
-    except Exception as e:
-        logger.exception(f"[Arrest Error] {e}")
-        await interaction.followup.send("The police department is defunded! 👮")
-
 @client.tree.command(name="expose", description="Generate a dramatic exposé about a user")
 async def expose(interaction: Interaction, target: Member):
     await interaction.response.defer()
@@ -348,68 +297,3 @@ async def expose(interaction: Interaction, target: Member):
     except Exception as e:
         logger.exception(f"[Expose Error] {e}")
         await interaction.followup.send("The lawyers shut us down! ⚖️")
-
-@client.tree.command(name="lawsuit", description="Take someone to court")
-async def lawsuit(interaction: Interaction, defendent: Member, complaint: str, amount: int = 0):
-    await interaction.response.defer()
-    
-    if defendent.bot:
-        await interaction.followup.send("Bots are above the law! 🤖⚖️", ephemeral=True)
-        return
-    
-    if defendent == interaction.user:
-        await interaction.followup.send("You can't sue yourself!", ephemeral=True)
-        return
-    
-    log = await get_user_log(str(defendent.id))
-    personality = ""
-    if log and log[4]:
-        personality = f"\nKnown behavior: {log[4]}"
-
-    # Trial Outcome
-    verdict = random.choice(["guilty", "not guilty"])
-
-    if verdict == "guilty":
-        if amount > 0:
-            multiplier = random.uniform(0.1,5)
-            amount = int(amount * multiplier)
-        else:
-            amount = random.randint(1,1000)
-    else:
-        amount = 0
-    
-    prompt = (
-        f"{interaction.user.display_name} has filed a lawsuit against {defendent.display_name} "
-        f"with this compaint: {complaint}\n"
-        f"{personality}\n\n"
-        f"As Judge ChopperBot, write a dramatic judge's statement (3-4 sentences) explaining why they're {verdict}. "
-        f"Be funny and absurd. The plantiff is to be awarded to ${amount}."
-    )
-    
-    try:
-        statement = await generate_command_response(
-            prompt=prompt,
-            server_id=str(interaction.guild.id),
-            use_personality=False,
-            temperature=0.95,
-            max_tokens=250
-        )
-        
-        embed = Embed(
-            title="⚖️ Trial ⚖️",
-            description=statement,
-            color=Color.dark_orange()
-        )
-
-        embed.add_field(name="Defendent", value=defendent.display_name, inline=True)
-        embed.add_field(name="Complaint", value=complaint, inline=True)
-        embed.add_field(name="Verdict", value=verdict, inline=True)
-        embed.add_field(name="Amount Rewarded", value=f"${amount}", inline=True)
-        embed.set_thumbnail(url=defendent.avatar.url if defendent.avatar else defendent.default_avatar.url)
-        embed.set_footer(text=f"Filed by {interaction.user.display_name}")
-        
-        await interaction.followup.send(embed=embed)
-        
-    except Exception as e:
-        logger.exception(f"[Lawsuit Error] {e}")
-        await interaction.followup.send("The judge is on vacation! ⚖️")

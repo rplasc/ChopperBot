@@ -16,7 +16,7 @@ from src.moderation.database import (
     delete_world_context, reset_database, delete_world_entry, get_pool_stats,
     invalidate_user_log_cache, list_world_facts, set_server_personality_lock,
     get_server_personality_lock, update_personality_notes_with_username,
-    pending_notes_queue
+    pending_notes_queue, clear_criminal_record
 )
 from src.utils.koboldcpp_util import get_kobold_response
 from src.moderation.logging import logger
@@ -992,6 +992,25 @@ async def pool_stats(interaction: Interaction):
     )
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ============================================================================
+# MISC COMMANDS
+# ============================================================================
+
+@admin_only_command(name="pardon", description="Clear someone's criminal record.")
+@is_admin()
+async def pardon(interaction: Interaction, user: Member):
+    await interaction.response.defer(ephemeral=True)
+    
+    await clear_criminal_record(str(user.id), str(interaction.guild.id))
+    
+    embed = Embed(
+        title="✅ Record Cleared",
+        description=f"{user.display_name} has been pardoned! Their criminal record has been wiped clean.",
+        color=Color.green()
+    )
+    
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @admin_only_command(name="admin_help", description="List of all admin commands")
 @is_admin()

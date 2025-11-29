@@ -152,8 +152,22 @@ async def init_db():
                 last_updated TEXT
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS criminal_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                server_id TEXT NOT NULL,
+                crime TEXT NOT NULL,
+                arrested_by TEXT NOT NULL,
+                jail_time INTEGER NOT NULL,
+                timestamp TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES user_logs(user_id)
+            )
+        """)
         await db.execute("CREATE INDEX IF NOT EXISTS idx_server_personalities ON server_personalities (server_id)")
-            
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_criminal_user ON criminal_records (user_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_criminal_server ON criminal_records (server_id)")
+
         await db.commit()
 
     await init_connection_pool()
@@ -743,6 +757,128 @@ async def get_server_personality_lock(server_id: str) -> bool:
             return bool(row[0])
         return False
     
+# ============================================================================
+# CRIMINAL RECORD FUNCTIONS
+# ============================================================================
+
+async def add_crime_record(
+    user_id: str,
+    server_id: str, 
+    crime: str,
+    arrested_by: str,
+    jail_time: int = 0
+):
+    
+    async with db_pool.get_connection() as db:
+        await db.execute("""
+            INSERT INTO criminal_records 
+                (user_id, server_id, crime, arrested_by, jail_time, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            server_id,
+            crime,
+            arrested_by,
+            jail_time,
+            datetime.datetime.now(datetime.timezone.utc).isoformat()
+        ))
+        await db.commit()
+    
+    logger.info(f"[Crime Recorded] {user_id} arrested for {crime} - {jail_time} years")
+
+
+async def get_criminal_record(user_id: str, server_id: str, limit: int = 5):
+    async with db_pool.get_connection() as db:
+        # Get recent crimes
+        cursor = await db.execute("""
+            SELECT crime, arrested_by, jail_time, timestamp
+            FROM criminal_records
+            WHERE user_id = ? AND server_id = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (user_id, server_id, limit))
+        crimes = await cursor.fetchall()
+        await cursor.close()
+        
+        # Get total statistics
+        cursor = await db.execute("""
+            SELECT 
+                COUNT(*) as total_crimes,
+                SUM(jail_time) as total_jail_time,
+                MAX(jail_time) as longest_sentence
+            FROM criminal_records
+            WHERE user_id = ? AND server_id = ?
+        """, (user_id, server_id))
+        stats = await cursor.fetchone()
+        await cursor.close()
+        
+        return {
+            "crimes": crimes,
+            "total_crimes": stats[0] if stats else 0,
+            "total_jail_time": stats[1] if stats else 0,
+            "longest_sentence": stats[2] if stats else 0
+        }
+
+async def get_server_most_wanted(server_id: str, limit: int = 10):
+    async with db_pool.get_connection() as db:
+        cursor = await db.execute("""
+            SELECT 
+                user_id,
+                COUNT(*) as crime_count,
+                SUM(jail_time) as total_time
+            FROM criminal_records
+            WHERE server_id = ?
+            GROUP BY user_id
+            ORDER BY total_time DESC
+            LIMIT ?
+        """, (server_id, limit))
+        most_wanted = await cursor.fetchall()
+        await cursor.close()
+        
+        return most_wanted
+
+async def clear_criminal_record(user_id: str, server_id: str):
+    async with db_pool.get_connection() as db:
+        await db.execute("""
+            DELETE FROM criminal_records
+            WHERE user_id = ? AND server_id = ?
+        """, (user_id, server_id))
+        await db.commit()
+    
+    logger.info(f"[Record Cleared] {user_id} in server {server_id}")
+
+async def get_crime_statistics(server_id: str):
+    async with db_pool.get_connection() as db:
+        # Most common crimes
+        cursor = await db.execute("""
+            SELECT crime, COUNT(*) as count
+            FROM criminal_records
+            WHERE server_id = ?
+            GROUP BY crime
+            ORDER BY count DESC
+            LIMIT 5
+        """, (server_id,))
+        common_crimes = await cursor.fetchall()
+        await cursor.close()
+        
+        # Total statistics
+        cursor = await db.execute("""
+            SELECT 
+                COUNT(*) as total_arrests,
+                COUNT(DISTINCT user_id) as unique_criminals,
+                SUM(jail_time) as total_jail_time
+            FROM criminal_records
+            WHERE server_id = ?
+        """, (server_id,))
+        stats = await cursor.fetchone()
+        await cursor.close()
+        
+        return {
+            "common_crimes": common_crimes,
+            "total_arrests": stats[0] if stats else 0,
+            "unique_criminals": stats[1] if stats else 0,
+            "total_jail_time": stats[2] if stats else 0
+        }
 
 # ============================================================================
 # WORLD MEMORY SYSTEM
