@@ -164,9 +164,24 @@ async def init_db():
                 FOREIGN KEY (user_id) REFERENCES user_logs(user_id)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS civil_cases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                server_id TEXT NOT NULL,
+                plaintiff_id TEXT NOT NULL,
+                defendant_id TEXT NOT NULL,
+                complaint TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                verdict TEXT NOT NULL,
+                timestamp TEXT NOT NULL
+            )
+        """)
         await db.execute("CREATE INDEX IF NOT EXISTS idx_server_personalities ON server_personalities (server_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_criminal_user ON criminal_records (user_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_criminal_server ON criminal_records (server_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_civil_plaintiff ON civil_cases (plaintiff_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_civil_defendant ON civil_cases (defendant_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_civil_server ON civil_cases (server_id)")
 
         await db.commit()
 
@@ -878,6 +893,95 @@ async def get_crime_statistics(server_id: str):
             "total_arrests": stats[0] if stats else 0,
             "unique_criminals": stats[1] if stats else 0,
             "total_jail_time": stats[2] if stats else 0
+        }
+    
+async def add_civil_case(
+    server_id: str,
+    plaintiff_id: str,
+    defendant_id: str,
+    complaint: str,
+    amount: int,
+    verdict: str
+):
+    
+    async with db_pool.get_connection() as db:
+        await db.execute("""
+            INSERT INTO civil_cases 
+                (server_id, plaintiff_id, defendant_id, complaint, amount, verdict, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            server_id,
+            plaintiff_id,
+            defendant_id,
+            complaint,
+            amount,
+            verdict,
+            datetime.datetime.now(datetime.timezone.utc).isoformat()
+        ))
+        await db.commit()
+    
+    logger.info(f"[Civil Case] {plaintiff_id} vs {defendant_id} - Verdict: {verdict}, Amount: ${amount}")
+
+async def get_civil_record(user_id: str, server_id: str):
+    async with db_pool.get_connection() as db:
+        # Cases as plaintiff
+        cursor = await db.execute("""
+            SELECT 
+                COUNT(*) as total_filed,
+                SUM(CASE WHEN verdict = 'guilty' THEN 1 ELSE 0 END) as won,
+                SUM(CASE WHEN verdict = 'guilty' THEN amount ELSE 0 END) as money_won
+            FROM civil_cases
+            WHERE plaintiff_id = ? AND server_id = ?
+        """, (user_id, server_id))
+        plaintiff_stats = await cursor.fetchone()
+        await cursor.close()
+        
+        # Cases as defendant
+        cursor = await db.execute("""
+            SELECT 
+                COUNT(*) as total_sued,
+                SUM(CASE WHEN verdict = 'guilty' THEN 1 ELSE 0 END) as lost,
+                SUM(CASE WHEN verdict = 'guilty' THEN amount ELSE 0 END) as money_lost
+            FROM civil_cases
+            WHERE defendant_id = ? AND server_id = ?
+        """, (user_id, server_id))
+        defendant_stats = await cursor.fetchone()
+        await cursor.close()
+        
+        # Recent cases (last 5)
+        cursor = await db.execute("""
+            SELECT 
+                plaintiff_id,
+                defendant_id,
+                complaint,
+                amount,
+                verdict,
+                timestamp,
+                CASE 
+                    WHEN plaintiff_id = ? THEN 'plaintiff'
+                    ELSE 'defendant'
+                END as role
+            FROM civil_cases
+            WHERE (plaintiff_id = ? OR defendant_id = ?) AND server_id = ?
+            ORDER BY timestamp DESC
+            LIMIT 5
+        """, (user_id, user_id, user_id, server_id))
+        recent_cases = await cursor.fetchall()
+        await cursor.close()
+        
+        return {
+            # Plaintiff stats (handle None values)
+            "cases_filed": plaintiff_stats[0] if plaintiff_stats and plaintiff_stats[0] else 0,
+            "cases_won": plaintiff_stats[1] if plaintiff_stats and plaintiff_stats[1] else 0,
+            "money_won": plaintiff_stats[2] if plaintiff_stats and plaintiff_stats[2] else 0,
+            
+            # Defendant stats (handle None values)
+            "times_sued": defendant_stats[0] if defendant_stats and defendant_stats[0] else 0,
+            "cases_lost": defendant_stats[1] if defendant_stats and defendant_stats[1] else 0,
+            "money_lost": defendant_stats[2] if defendant_stats and defendant_stats[2] else 0,
+            
+            # Recent activity
+            "recent_cases": recent_cases
         }
 
 # ============================================================================

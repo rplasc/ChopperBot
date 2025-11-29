@@ -6,7 +6,9 @@ from src.moderation.database import (
     get_user_log,
     add_crime_record, 
     get_criminal_record,
-    get_crime_statistics
+    get_crime_statistics,
+    add_civil_case,
+    get_civil_record
 )
 from src.utils.response_generator import generate_command_response
 from src.moderation.logging import logger
@@ -69,18 +71,18 @@ async def arrest(interaction: Interaction, criminal: Member, crime: str):
     await interaction.followup.send(embed=embed)
 
 @client.tree.command(name="lawsuit", description="Take someone to court")
-async def lawsuit(interaction: Interaction, defendent: Member, complaint: str, amount: int = 0):
+async def lawsuit(interaction: Interaction, defendant: Member, complaint: str, amount: int = 0):
     await interaction.response.defer()
     
-    if defendent.bot:
+    if defendant.bot:
         await interaction.followup.send("Bots are above the law! 🤖⚖️", ephemeral=True)
         return
     
-    if defendent == interaction.user:
+    if defendant == interaction.user:
         await interaction.followup.send("You can't sue yourself!", ephemeral=True)
         return
     
-    log = await get_user_log(str(defendent.id))
+    log = await get_user_log(str(defendant.id))
     personality = ""
     if log and log[4]:
         personality = f"\nKnown behavior: {log[4]}"
@@ -92,20 +94,22 @@ async def lawsuit(interaction: Interaction, defendent: Member, complaint: str, a
         if amount > 0:
             multiplier = random.uniform(0.1,5)
             amount = int(amount * multiplier)
-            await add_crime_record(
-                user_id=str(defendent.id),
-                server_id=str(interaction.guild.id),
-                crime=complaint,
-                arrested_by="N/A",
-                jail_time=0
-            )
         else:
             amount = random.randint(1,1000)
     else:
         amount = 0
+
+    await add_civil_case(
+        server_id=str(interaction.guild.id),
+        plaintiff_id=str(interaction.user.id),
+        defendant_id=str(defendant.id),
+        complaint=complaint,
+        amount=amount,
+        verdict=verdict
+    )
     
     prompt = (
-        f"{interaction.user.display_name} has filed a lawsuit against {defendent.display_name} "
+        f"{interaction.user.display_name} has filed a lawsuit against {defendant.display_name} "
         f"with this compaint: {complaint}\n"
         f"{personality}\n\n"
         f"As Judge ChopperBot, write a dramatic judge's statement (3-4 sentences) explaining why they're {verdict}. "
@@ -123,19 +127,22 @@ async def lawsuit(interaction: Interaction, defendent: Member, complaint: str, a
 
     except Exception as e:
         logger.exception(f"[Lawsuit Error] {e}")
-        statement = f"The court finds the defendant, {defendent.display_name}, {verdict} of {complaint}. The plantiff is to be awarded ${amount}."
+        statement = f"The court finds the defendant, {defendant.display_name}, {verdict} of {complaint}. The plantiff is to be awarded ${amount}."
+    
+    # Verdict color
+    color = Color.green() if verdict == "guilty" else Color.red()
 
     embed = Embed(
-        title="⚖️ Trial ⚖️",
+        title="⚖️ Civil Court Trial ⚖️",
         description=statement,
-        color=Color.dark_orange()
+        color=color
     )
 
-    embed.add_field(name="Defendent", value=defendent.display_name, inline=True)
+    embed.add_field(name="Defendent", value=defendant.display_name, inline=True)
     embed.add_field(name="Complaint", value=complaint, inline=True)
     embed.add_field(name="Verdict", value=verdict, inline=True)
     embed.add_field(name="Amount Rewarded", value=f"${amount}", inline=True)
-    embed.set_thumbnail(url=defendent.avatar.url if defendent.avatar else defendent.default_avatar.url)
+    embed.set_thumbnail(url=defendant.avatar.url if defendant.avatar else defendant.default_avatar.url)
     embed.set_footer(text=f"Filed by {interaction.user.display_name}")
     
     await interaction.followup.send(embed=embed)
@@ -240,5 +247,96 @@ async def crime_stats(interaction: Interaction):
         )
     
     embed.set_footer(text=f"Source: {interaction.guild.name} PD")
+    
+    await interaction.followup.send(embed=embed)
+
+@client.tree.command(name="legal_record", description="View someone's legal case history")
+async def legal_record(interaction: Interaction, user: Member = None):
+    await interaction.response.defer()
+    
+    target = user if user else interaction.user
+        
+    record = await get_civil_record(str(target.id), str(interaction.guild.id))
+    
+    # Calculate win rate
+    total_cases = record["cases_filed"]
+    if total_cases > 0:
+        win_rate = (record["cases_won"] / total_cases) * 100
+    else:
+        win_rate = 0
+    
+    # Calculate net money
+    net_money = record["money_won"] - record["money_lost"]
+    
+    embed = Embed(
+        title="⚖️ Legal Record ⚖️",
+        description=f"**{target.display_name}'s Legal History**",
+        color=Color.blue()
+    )
+    
+    # As Plaintiff
+    embed.add_field(
+        name="📋 As Plaintiff",
+        value=f"**Cases Filed:** {record['cases_filed']}\n"
+              f"**Cases Won:** {record['cases_won']}\n"
+              f"**Win Rate:** {win_rate:.1f}%\n"
+              f"**Money Won:** ${record['money_won']:,}",
+        inline=True
+    )
+    
+    # As Defendant
+    embed.add_field(
+        name="🎯 As Defendant",
+        value=f"**Times Sued:** {record['times_sued']}\n"
+              f"**Cases Lost:** {record['cases_lost']}\n"
+              f"**Money Lost:** ${record['money_lost']:,}",
+        inline=True
+    )
+    
+    # Net worth
+    net_emoji = "📈" if net_money >= 0 else "📉"
+    embed.add_field(
+        name=f"{net_emoji} Net Worth",
+        value=f"**${net_money:,}**",
+        inline=False
+    )
+    
+    # Recent cases
+    if record["recent_cases"]:
+        cases_text = []
+        for plaintiff_id, defendant_id, complaint, amount, verdict, timestamp, role in record["recent_cases"]:
+            try:
+                dt = datetime.datetime.fromisoformat(timestamp)
+                time_str = f"<t:{int(dt.timestamp())}:R>"
+            except:
+                time_str = "Unknown"
+            
+            if role == "plaintiff":
+                opponent_id = defendant_id
+                result = "WON" if verdict == "guilty" else "LOST"
+                money = f"+${amount:,}" if verdict == "guilty" else "$0"
+            else:
+                opponent_id = plaintiff_id
+                result = "LOST" if verdict == "guilty" else "WON"
+                money = f"-${amount:,}" if verdict == "guilty" else "$0"
+            
+            try:
+                opponent = await client.fetch_user(int(opponent_id))
+                opponent_name = opponent.name if opponent else "Unknown"
+            except:
+                opponent_name = "Unknown"
+            
+            cases_text.append(
+                f"**{result}** vs {opponent_name} | {money}\n"
+                f"└ {complaint[:40]}{'...' if len(complaint) > 40 else ''} | {time_str}"
+            )
+        
+        embed.add_field(
+            name="📜 Recent Cases",
+            value="\n\n".join(cases_text[:3]),
+            inline=False
+        )
+    
+    embed.set_thumbnail(url=target.avatar.url if target.avatar else target.default_avatar.url)
     
     await interaction.followup.send(embed=embed)
