@@ -27,46 +27,167 @@ async def arrest(interaction: Interaction, criminal: Member, crime: str):
         personality = f"\nKnown behavior: {log[4]}"
     
     # Random sentence
-    years = random.randint(1, 100)
-
-    await add_crime_record(
-        user_id=str(criminal.id),
-        server_id=str(interaction.guild.id),
-        crime=crime,
-        arrested_by=interaction.user.display_name,
-        jail_time=years
-    )
+    years = random.randint(1, 999)
     
-    prompt = (
-        f"Officer {interaction.user.display_name} has arrested {criminal.display_name} "
-        f"for the crime of: {crime}\n"
-        f"{personality}\n\n"
-        f"Write a dramatic police report (3-4 sentences) explaining why they're guilty. "
-        f"Be funny and absurd. They've been sentenced to {years} years."
-    )
+    # DYNAMIC OUTCOMES with weighted probabilities
+    outcomes = [
+        ("arrested", 60),
+        ("evaded", 20),
+        ("resisted", 10),
+        ("bribed", 5),
+        ("killed", 3),
+        ("undercover", 2),
+    ]
     
+    # Weighted random choice
+    outcome = random.choices(
+        [o[0] for o in outcomes],
+        weights=[o[1] for o in outcomes],
+        k=1
+    )[0]
+    
+    # Generate outcome-specific narratives
+    if outcome == "arrested":
+        # NORMAL ARREST - Save to database
+        await add_crime_record(
+            user_id=str(criminal.id),
+            server_id=str(interaction.guild.id),
+            crime=crime,
+            arrested_by=interaction.user.display_name,
+            jail_time=years
+        )
+        
+        prompt = (
+            f"Officer {interaction.user.display_name} successfully arrested {criminal.display_name} "
+            f"for: {crime}\n{personality}\n\n"
+            f"Write a dramatic police report (3-4 sentences). They've been sentenced to {years} years."
+        )
+        
+        embed_title = "🚨 ARREST WARRANT 🚨"
+        embed_color = Color.red()
+        footer = f"Arrested by Officer {interaction.user.display_name} | Record saved"
+        
+    elif outcome == "evaded":
+        # ESCAPED - No record saved
+        prompt = (
+            f"{criminal.display_name} evaded arrest from Officer {interaction.user.display_name} "
+            f"for the crime of: {crime}\n{personality}\n\n"
+            f"Write a dramatic escape scene (3-4 sentences). They got away! "
+            "Include action movie tropes and ridiculous escape methods."
+        )
+        
+        embed_title = "💨 SUSPECT EVADED 💨"
+        embed_color = Color.orange()
+        footer = "⚠️ Suspect remains at large | No record saved"
+        years = "AT LARGE"
+        
+    elif outcome == "resisted":
+        # RESISTED - Half sentence
+        years = years // 2
+        await add_crime_record(
+            user_id=str(criminal.id),
+            server_id=str(interaction.guild.id),
+            crime=f"{crime} + resisting arrest",
+            arrested_by=interaction.user.display_name,
+            jail_time=years
+        )
+        
+        prompt = (
+            f"{criminal.display_name} resisted arrest by Officer {interaction.user.display_name}! "
+            f"Crime: {crime}\n{personality}\n\n"
+            f"Write a dramatic fight scene (3-4 sentences). They were eventually subdued. "
+            f"Reduced sentence: {years} years due to good lawyer."
+        )
+        
+        embed_title = "⚔️ RESISTED ARREST ⚔️"
+        embed_color = Color.dark_red()
+        footer = f"Subdued by Officer {interaction.user.display_name} | Record saved"
+        
+    elif outcome == "bribed":
+        # BRIBED - No record, they pay money
+        bribe_amount = random.randint(100, 10000)
+        
+        prompt = (
+            f"{criminal.display_name} bribed Officer {interaction.user.display_name} "
+            f"to avoid arrest for: {crime}\n{personality}\n\n"
+            f"Write a corrupt cop scene (3-4 sentences). "
+            f"They paid ${bribe_amount} and walked free. Be funny and dramatic."
+        )
+        
+        embed_title = "💰 BRIBE ACCEPTED 💰"
+        embed_color = Color.gold()
+        footer = f"💵 ${bribe_amount} changed hands | No record (wink wink)"
+        years = f"$0 (paid ${bribe_amount} bribe)"
+        
+    elif outcome == "killed":
+        # KILLED - Permanent record with 0 years (they're dead)
+        await add_crime_record(
+            user_id=str(criminal.id),
+            server_id=str(interaction.guild.id),
+            crime=f"{crime} (DECEASED)",
+            arrested_by=interaction.user.display_name,
+            jail_time=0
+        )
+        
+        prompt = (
+            f"{criminal.display_name} was killed during arrest by Officer {interaction.user.display_name} "
+            f"for: {crime}\n{personality}\n\n"
+            f"Write a dramatic death scene (3-4 sentences). Over-the-top and absurd. "
+            "They won't be committing any more crimes."
+        )
+        
+        embed_title = "💀 SUSPECT DECEASED 💀"
+        embed_color = Color.dark_gray()
+        footer = f"KIA by Officer {interaction.user.display_name} | RIP"
+        years = "DECEASED ☠️"
+        
+    else:  # undercover
+        # UNDERCOVER COP - Reverse arrest!
+        await add_crime_record(
+            user_id=str(interaction.user.id),
+            server_id=str(interaction.guild.id),
+            crime="Attempted arrest of undercover officer",
+            arrested_by=criminal.display_name,
+            jail_time=years
+        )
+        
+        prompt = (
+            f"Plot twist! {criminal.display_name} was an undercover cop all along! "
+            f"Officer {interaction.user.display_name} attempted to arrest them for: {crime}\n"
+            f"{personality}\n\n"
+            f"Write a dramatic plot twist reveal (3-4 sentences). "
+            f"{interaction.user.display_name} is now arrested for {years} years!"
+        )
+        
+        embed_title = "🕵️ UNDERCOVER REVEALED 🕵️"
+        embed_color = Color.blue()
+        footer = f"UNO REVERSE! {interaction.user.display_name} arrested instead!"
+        criminal = interaction.user  # Swap for embed display
+    
+    # Generate AI narrative
     try:
         report = await generate_command_response(
             prompt=prompt,
-            server_id=str(interaction.guild.id),
-            use_personality=False,
-            temperature=0.95,
-            max_tokens=250
+            server_id=interaction.guild.id,
+            use_personality=True,
+            temperature=1.0,  # Higher temp for more chaos
+            max_tokens=300
         )
     except Exception as e:
         logger.exception(f"[Arrest Error] {e}")
-        report = f"{criminal.display_name} has been arrested for the crime of {crime} and was found guilty."
-        
+        report = f"Standard procedure executed. Outcome: {outcome}"
+    
+    # Build embed
     embed = Embed(
-        title="🚨 ARREST WARRANT 🚨",
+        title=embed_title,
         description=report,
-        color=Color.red()
+        color=embed_color
     )
-    embed.add_field(name="Criminal", value=criminal.display_name, inline=True)
+    embed.add_field(name="Suspect", value=criminal.display_name, inline=True)
     embed.add_field(name="Crime", value=crime, inline=True)
-    embed.add_field(name="Sentence", value=f"{years} years in jail", inline=True)
+    embed.add_field(name="Outcome", value=str(years), inline=True)
     embed.set_thumbnail(url=criminal.avatar.url if criminal.avatar else criminal.default_avatar.url)
-    embed.set_footer(text=f"Arrested by Officer {interaction.user.display_name}")
+    embed.set_footer(text=footer)
     
     await interaction.followup.send(embed=embed)
 
@@ -86,64 +207,212 @@ async def lawsuit(interaction: Interaction, defendant: Member, complaint: str, a
     personality = ""
     if log and log[4]:
         personality = f"\nKnown behavior: {log[4]}"
-
-    # Trial Outcome
-    verdict = random.choice(["guilty", "not guilty"])
-
-    if verdict == "guilty":
-        if amount > 0:
-            multiplier = random.uniform(0.1,5)
-            amount = int(amount * multiplier)
-        else:
-            amount = random.randint(1,1000)
-    else:
-        amount = 0
-
-    await add_civil_case(
-        server_id=str(interaction.guild.id),
-        plaintiff_id=str(interaction.user.id),
-        defendant_id=str(defendant.id),
-        complaint=complaint,
-        amount=amount,
-        verdict=verdict
-    )
     
-    prompt = (
-        f"{interaction.user.display_name} has filed a lawsuit against {defendant.display_name} "
-        f"with this compaint: {complaint}\n"
-        f"{personality}\n\n"
-        f"As Judge ChopperBot, write a dramatic judge's statement (3-4 sentences) explaining why they're {verdict}. "
-        f"Be funny and absurd. The plantiff is to be awarded to ${amount}."
-    )
+    # DYNAMIC OUTCOMES with weighted probabilities
+    outcomes = [
+        ("guilty", 40),
+        ("not_guilty", 35),
+        ("settled", 15),
+        ("counter_sued", 5),
+        ("dismissed", 3),
+        ("mistrial", 2),
+    ]
     
+    outcome = random.choices(
+        [o[0] for o in outcomes],
+        weights=[o[1] for o in outcomes],
+        k=1
+    )[0]
+    
+    # Calculate amounts based on outcome
+    if amount <= 0:
+        amount = random.randint(100, 5000)
+    
+    if outcome == "guilty":
+        # NORMAL WIN - Defendant pays
+        multiplier = random.uniform(0.5, 3.0)
+        final_amount = int(amount * multiplier)
+        verdict = "guilty"
+        
+        await add_civil_case(
+            server_id=str(interaction.guild.id),
+            plaintiff_id=str(interaction.user.id),
+            defendant_id=str(defendant.id),
+            complaint=complaint,
+            amount=final_amount,
+            verdict="guilty"
+        )
+        
+        prompt = (
+            f"Judge rules GUILTY! {defendant.display_name} must pay {interaction.user.display_name} "
+            f"${final_amount} for: {complaint}\n{personality}\n\n"
+            f"Write dramatic judge's ruling (3-4 sentences). Justice is served!"
+        )
+        
+        embed_title = "⚖️ GUILTY VERDICT ⚖️"
+        embed_color = Color.green()
+        footer = f"Case won by {interaction.user.display_name}"
+        
+    elif outcome == "not_guilty":
+        # NORMAL LOSS - Nobody pays
+        final_amount = 0
+        verdict = "not guilty"
+        
+        await add_civil_case(
+            server_id=str(interaction.guild.id),
+            plaintiff_id=str(interaction.user.id),
+            defendant_id=str(defendant.id),
+            complaint=complaint,
+            amount=0,
+            verdict="not guilty"
+        )
+        
+        prompt = (
+            f"Judge rules NOT GUILTY! {defendant.display_name} is innocent of: {complaint}\n"
+            f"{personality}\n\n"
+            f"{interaction.user.display_name} gets nothing. Write judge's dismissal (3-4 sentences)."
+        )
+        
+        embed_title = "⚖️ NOT GUILTY ⚖️"
+        embed_color = Color.red()
+        footer = f"Case dismissed | {defendant.display_name} vindicated"
+        
+    elif outcome == "settled":
+        # SETTLED - Split the difference
+        final_amount = int(amount * random.uniform(0.2, 0.6))
+        verdict = "guilty"
+        
+        await add_civil_case(
+            server_id=str(interaction.guild.id),
+            plaintiff_id=str(interaction.user.id),
+            defendant_id=str(defendant.id),
+            complaint=complaint,
+            amount=final_amount,
+            verdict="guilty"
+        )
+        
+        prompt = (
+            f"SETTLED OUT OF COURT! {defendant.display_name} pays {interaction.user.display_name} "
+            f"${final_amount} to avoid trial for: {complaint}\n{personality}\n\n"
+            f"Write about the settlement negotiation (3-4 sentences). Both parties compromise."
+        )
+        
+        embed_title = "🤝 SETTLED 🤝"
+        embed_color = Color.blue()
+        footer = f"Settled for ${final_amount} | Case closed"
+        
+    elif outcome == "counter_sued":
+        # COUNTER-SUED - Plaintiff loses and pays!
+        final_amount = int(amount * random.uniform(1.5, 3.0))
+        verdict = "not guilty"
+        
+        # Original case
+        await add_civil_case(
+            server_id=str(interaction.guild.id),
+            plaintiff_id=str(interaction.user.id),
+            defendant_id=str(defendant.id),
+            complaint=complaint,
+            amount=0,
+            verdict="not guilty"
+        )
+        
+        # Counter-suit (reverse roles)
+        await add_civil_case(
+            server_id=str(interaction.guild.id),
+            plaintiff_id=str(defendant.id),
+            defendant_id=str(interaction.user.id),
+            complaint=f"Frivolous lawsuit about '{complaint}'",
+            amount=final_amount,
+            verdict="guilty"
+        )
+        
+        prompt = (
+            f"UNO REVERSE! {defendant.display_name} counter-sued {interaction.user.display_name} "
+            f"for filing a frivolous lawsuit! {interaction.user.display_name} now owes ${final_amount}!\n"
+            f"{personality}\n\n"
+            f"Write dramatic counter-suit victory (3-4 sentences). Tables have turned!"
+        )
+        
+        embed_title = "🔄 COUNTER-SUED! 🔄"
+        embed_color = Color.purple()
+        footer = f"Plot twist! {interaction.user.display_name} must pay ${final_amount}"
+        # Swap roles for display
+        temp = defendant
+        defendant = interaction.user
+        interaction._user = temp
+        
+    elif outcome == "dismissed":
+        # DISMISSED - Waste of court's time, plaintiff pays fine
+        final_amount = random.randint(50, 500)
+        verdict = "not guilty"
+        
+        await add_civil_case(
+            server_id=str(interaction.guild.id),
+            plaintiff_id=str(interaction.user.id),
+            defendant_id=str(defendant.id),
+            complaint=complaint,
+            amount=0,
+            verdict="not guilty"
+        )
+        
+        prompt = (
+            f"CASE DISMISSED! Judge throws out {interaction.user.display_name}'s lawsuit about: {complaint}\n"
+            f"Waste of court time! {interaction.user.display_name} fined ${final_amount} for frivolous case.\n"
+            f"{personality}\n\n"
+            f"Write angry judge rant (3-4 sentences). This case was ridiculous!"
+        )
+        
+        embed_title = "🚫 DISMISSED 🚫"
+        embed_color = Color.dark_red()
+        footer = f"Frivolous lawsuit! {interaction.user.display_name} fined ${final_amount}"
+        final_amount = f"-${final_amount} (fine)"
+        
+    else:  # mistrial
+        # MISTRIAL - Do it all over again, no record saved
+        final_amount = "MISTRIAL"
+        verdict = "mistrial"
+        
+        # Don't save to database - case needs retrial
+        
+        prompt = (
+            f"MISTRIAL DECLARED! The case of {interaction.user.display_name} vs {defendant.display_name} "
+            f"about '{complaint}' has ended in mistrial!\n{personality}\n\n"
+            f"Write chaotic courtroom scene (3-4 sentences). Something went horribly wrong. "
+            "Case must be retried!"
+        )
+        
+        embed_title = "⚠️ MISTRIAL ⚠️"
+        embed_color = Color.orange()
+        footer = "Case must be retried | No record saved"
+    
+    # Generate AI narrative
     try:
         statement = await generate_command_response(
             prompt=prompt,
             server_id=str(interaction.guild.id),
-            use_personality=False,
-            temperature=0.95,
-            max_tokens=250
+            use_personality=True,
+            temperature=1.0,
+            max_tokens=300
         )
-
     except Exception as e:
         logger.exception(f"[Lawsuit Error] {e}")
-        statement = f"The court finds the defendant, {defendant.display_name}, {verdict} of {complaint}. The plantiff is to be awarded ${amount}."
+        statement = f"The court has reached a decision. Outcome: {outcome}"
     
-    # Verdict color
-    color = Color.green() if verdict == "guilty" else Color.red()
-
+    # Build embed
     embed = Embed(
-        title="⚖️ Civil Court Trial ⚖️",
+        title=embed_title,
         description=statement,
-        color=color
+        color=embed_color
     )
-
-    embed.add_field(name="Defendent", value=defendant.display_name, inline=True)
-    embed.add_field(name="Complaint", value=complaint, inline=True)
-    embed.add_field(name="Verdict", value=verdict, inline=True)
-    embed.add_field(name="Amount Rewarded", value=f"${amount}", inline=True)
+    
+    embed.add_field(name="Plaintiff", value=interaction.user.display_name, inline=True)
+    embed.add_field(name="Defendant", value=defendant.display_name, inline=True)
+    embed.add_field(name="Complaint", value=complaint[:100], inline=False)
+    embed.add_field(name="Outcome", value=outcome.replace("_", " ").title(), inline=True)
+    embed.add_field(name="Amount", value=f"${final_amount:,}" if isinstance(final_amount, int) else final_amount, inline=True)
+    
     embed.set_thumbnail(url=defendant.avatar.url if defendant.avatar else defendant.default_avatar.url)
-    embed.set_footer(text=f"Filed by {interaction.user.display_name}")
+    embed.set_footer(text=footer)
     
     await interaction.followup.send(embed=embed)
 
