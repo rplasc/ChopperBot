@@ -191,6 +191,9 @@ async def delete_user_data(user_id: str):
     async with db_pool.get_connection() as db:
         await db.execute("DELETE FROM user_logs WHERE user_id = ?", (user_id,))
         await db.execute("DELETE FROM server_interactions WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM criminal_records WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM civil_cases WHERE defendant_id = ?", (user_id,))
+        await db.execute("DELETE FROM civil_cases WHERE plaintiff_id = ?", (user_id,))
         await db.commit()
 
     if user_id in user_log_cache:
