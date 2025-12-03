@@ -10,7 +10,7 @@ from src.moderation.database import (
     add_civil_case,
     get_civil_record
 )
-from src.utils.response_generator import generate_command_response
+from src.utils.response_generator import generate_command_response, generate_roleplay_response
 from src.moderation.logging import logger
 
 @client.tree.command(name="arrest", description="Arrest someone for their crimes")
@@ -240,7 +240,7 @@ async def lawsuit(interaction: Interaction, defendant: Member, complaint: str, a
             defendant_id=str(defendant.id),
             complaint=complaint,
             amount=final_amount,
-            verdict="guilty"
+            verdict=verdict
         )
         
         prompt = (
@@ -264,7 +264,7 @@ async def lawsuit(interaction: Interaction, defendant: Member, complaint: str, a
             defendant_id=str(defendant.id),
             complaint=complaint,
             amount=0,
-            verdict="not guilty"
+            verdict=verdict
         )
         
         prompt = (
@@ -288,7 +288,7 @@ async def lawsuit(interaction: Interaction, defendant: Member, complaint: str, a
             defendant_id=str(defendant.id),
             complaint=complaint,
             amount=final_amount,
-            verdict="guilty"
+            verdict=verdict
         )
         
         prompt = (
@@ -313,7 +313,7 @@ async def lawsuit(interaction: Interaction, defendant: Member, complaint: str, a
             defendant_id=str(defendant.id),
             complaint=complaint,
             amount=0,
-            verdict="not guilty"
+            verdict=verdict
         )
         
         # Counter-suit (reverse roles)
@@ -336,7 +336,6 @@ async def lawsuit(interaction: Interaction, defendant: Member, complaint: str, a
         embed_title = "🔄 COUNTER-SUED! 🔄"
         embed_color = Color.purple()
         footer = f"Plot twist! {interaction.user.display_name} must pay ${final_amount}"
-        # Swap roles for display
         temp = defendant
         defendant = interaction.user
         interaction._user = temp
@@ -370,10 +369,7 @@ async def lawsuit(interaction: Interaction, defendant: Member, complaint: str, a
     else:  # mistrial
         # MISTRIAL - Do it all over again, no record saved
         final_amount = "MISTRIAL"
-        verdict = "mistrial"
-        
-        # Don't save to database - case needs retrial
-        
+                
         prompt = (
             f"MISTRIAL DECLARED! The case of {interaction.user.display_name} vs {defendant.display_name} "
             f"about '{complaint}' has ended in mistrial!\n{personality}\n\n"
@@ -387,10 +383,11 @@ async def lawsuit(interaction: Interaction, defendant: Member, complaint: str, a
     
     # Generate AI narrative
     try:
-        statement = await generate_command_response(
-            prompt=prompt,
-            server_id=str(interaction.guild.id),
-            use_personality=True,
+        character_description = "You are Judge ChopperBot, a dramatic and witty AI programmed to pass judgement over civil cases."
+
+        statement = await generate_roleplay_response(
+            character_description=character_description,
+            scenario=prompt,
             temperature=1.0,
             max_tokens=300
         )
