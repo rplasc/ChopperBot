@@ -297,3 +297,44 @@ async def expose(interaction: Interaction, target: Member):
     except Exception as e:
         logger.exception(f"[Expose Error] {e}")
         await interaction.followup.send("The lawyers shut us down! ⚖️")
+
+@client.tree.command(name="eulogy", description="Write a dramatic eulogy for someone")
+async def eulogy(interaction: Interaction, departed: Member, cause_of_death: str):
+    await interaction.response.defer()
+    
+    log = await get_user_log(str(departed.id))
+    life_story = ""
+    if log and log[4]:
+        life_story = f"\nTheir legacy: {log[4]}"
+    
+    prompt = (
+        f"Write a dramatic and absurd eulogy for {departed.display_name} who tragically died from: {cause_of_death}\n"
+        f"{life_story}\n\n"
+        "Make it overly dramatic and funny (3-4 sentences). Include 'they will be missed' and "
+        "ridiculous accomplishments they 'achieved' in life."
+    )
+    
+    try:
+        eulogy_text = await generate_command_response(
+            prompt=prompt,
+            server_id=interaction.guild.id,
+            use_personality=True,
+            temperature=0.95,
+            max_tokens=350
+        )
+        
+        embed = Embed(
+            title="⚰️ IN LOVING MEMORY ⚰️",
+            description=eulogy_text,
+            color=Color.dark_grey()
+        )
+        embed.add_field(name="Departed", value=departed.display_name, inline=True)
+        embed.add_field(name="Cause of Death", value=cause_of_death, inline=True)
+        embed.set_thumbnail(url=departed.avatar.url if departed.avatar else departed.default_avatar.url)
+        embed.set_footer(text=f"Funeral services conducted by {interaction.user.display_name}")
+        
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        logger.exception(f"[Eulogy Error] {e}")
+        await interaction.followup.send("Too sad to continue... 😭")
