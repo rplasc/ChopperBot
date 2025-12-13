@@ -6,8 +6,8 @@ from src.aclient import client
 from src.utils.history_util import trim_history
 from src.moderation.database import (init_db, increment_server_interaction, queue_increment, flush_user_logs_periodically,
                                     queue_user_log, maybe_queue_notes_update, get_user_interactions,
-                                    interaction_cache, load_interaction_cache, maybe_update_world, add_to_world_history,
-                                    close_connection_pool, flush_user_logs, flush_pending_notes_periodically)
+                                    interaction_cache, load_interaction_cache, close_connection_pool,
+                                    flush_user_logs, flush_pending_notes_periodically)
 from src.moderation.logging import init_logging_db, logger, log_chat_message
 from src.commands import (admin, user, mystical, news, recommend, relationship, weather, chatgpt, images,
                         personality, web, memes, crime, finance)
@@ -160,7 +160,6 @@ async def handle_server_message(message):
     # Add user message
     user_msg = format_user_message(user_name, user_message, is_dm=False)
     history.append(user_msg)
-    add_to_world_history(server_id, message.author.display_name, user_message)
 
     # Trim history
     history[:] = trim_history(history, max_tokens=2000)
@@ -272,7 +271,6 @@ async def update_user_stats(server_id, user_id, user_name, history):
     
     # Run these in background (non-blocking)
     asyncio.create_task(maybe_queue_notes_update(user_id, user_name, user_history, interactions))
-    # asyncio.create_task(maybe_update_world(server_id))
 
 # ============================================================================
 # GLOBAL ERROR HANDLER

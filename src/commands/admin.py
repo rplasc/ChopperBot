@@ -323,9 +323,18 @@ async def list_server_personalities_cmd(interaction: Interaction):
 @admin_only_command(name="world_set", description="Manually add or update a world fact")
 @is_admin()
 async def add_fact(interaction: Interaction, key: str, value: str):
-    await manual_world_update(str(interaction.guild.id), key, value)
+    success = await manual_world_update(str(interaction.guild.id), key, value)
+    
     key_display = key.replace("_", " ").title()
-    await interaction.response.send_message(f"✅ World fact updated: **{key_display}**: {value}", ephemeral=True)
+    
+    if success:
+        await interaction.response.send_message(f"✅ World fact updated: **{key_display}**: {value}", ephemeral=True)
+    else:
+        await interaction.response.send_message(
+            f"⚠️ **World Context Full!**\n"
+            f"You have reached the limit of facts. Please delete an old fact using `/world_delete` before adding a new one.",
+            ephemeral=True
+        )
 
 @admin_only_command(name="world_list", description="View all world memory facts")
 @is_admin()
@@ -352,17 +361,14 @@ async def show_world(interaction: Interaction):
 @admin_only_command(name="world_view", description="View the world context as the bot sees it.")
 async def world_view(interaction):    
     server_id = str(interaction.guild_id)
-    context = await get_world_context(server_id)
     
-    if not context:
-        await interaction.response.send_message(
-            "📭 No world context available yet.",
-            ephemeral=True
-        )
-        return
+    server_name = interaction.guild.name
+    owner_name = interaction.guild.owner.display_name if interaction.guild.owner else "Unknown"
+
+    context = await get_world_context(server_id, server_name, owner_name)
     
     await interaction.response.send_message(
-        f"**🌍 Current World Context**\n\n{context}",
+        context,
         ephemeral=True
     )
 

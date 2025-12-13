@@ -990,13 +990,26 @@ async def get_civil_record(user_id: str, server_id: str):
 # ============================================================================
 # WORLD MEMORY SYSTEM
 # ============================================================================
-world_histories = {} # {server_id: [ {author, content}, ... ]}
-world_update_cooldowns = {}
-WORLD_UPDATE_MESSAGE_THRESHOLD = 25
-WORLD_UPDATE_COOLDOWN = 120
 
-async def add_world_fact(server_id: str, key: str, value: str):
+MAX_WORLD_FACTS = 15  # Hard limit to prevent context bloat
+
+async def add_world_fact(server_id: str, key: str, value: str) -> bool:
     async with db_pool.get_connection() as db:
+        # Check current count first
+        cursor = await db.execute("SELECT COUNT(*) FROM world_state WHERE server_id = ?", (server_id,))
+        count = (await cursor.fetchone())[0]
+        await cursor.close()
+
+        # Allow updates to existing keys, but prevent new ones if full
+        if count >= MAX_WORLD_FACTS:
+            # Check if we are updating an existing key
+            cursor = await db.execute("SELECT 1 FROM world_state WHERE server_id = ? AND key = ?", (server_id, key))
+            exists = await cursor.fetchone()
+            await cursor.close()
+            
+            if not exists:
+                return False  # Reject new entry
+
         await db.execute("""
             INSERT INTO world_state (server_id, key, value, last_updated)
             VALUES (?, ?, ?, ?)
@@ -1005,107 +1018,33 @@ async def add_world_fact(server_id: str, key: str, value: str):
                 last_updated = excluded.last_updated
         """, (server_id, key, value, datetime.datetime.now(datetime.timezone.utc)))
         await db.commit()
+        return True
 
-async def get_world_context(server_id: str, max_facts: int = 15) -> str:    
+async def get_world_context(server_id: str, server_name: str = "Unknown", owner_name: str = "Unknown") -> str:    
     async with db_pool.get_connection() as db:
         async with db.execute("""
-            SELECT key, value, last_updated 
+            SELECT key, value 
             FROM world_state 
             WHERE server_id = ?
-            ORDER BY last_updated DESC
-            LIMIT ?
-        """, (server_id, max_facts)) as cursor:
+            ORDER BY key ASC
+        """, (server_id,)) as cursor:
             facts = []
             async for row in cursor:
                 key = row[0].replace("_", " ").title()
                 value = row[1]
-                facts.append(f"• {key}: {value}")
+                facts.append(f"• **{key}**: {value}")
+    
+    # Always return the header, even if no custom facts exist
+    header = (
+        f"🌍 **Current World Context**\n"
+        f"• **Location**: {server_name}\n"
+        f"• **Owner/Ruler**: {owner_name}"
+    )
     
     if not facts:
-        return ""
+        return header
     
-    return "Current World State:\n" + "\n".join(facts)
-
-async def summarize_world_and_update(server_id: str, recent_messages: list):
-    if not recent_messages or len(recent_messages) < 10:
-        return
-
-    # Take last 30 messages
-    snippet = "\n".join([
-        f"{m['author']}: {m['content']}" 
-        for m in recent_messages[-30:]
-    ])
-
-    prompt = (
-        "Extract factual updates about the world/story/setting from these messages.\n"
-        "Focus ONLY on:\n"
-        "- Major events (battles, discoveries, arrivals/departures)\n"
-        "- Character status changes (injuries, transformations, relationships)\n"
-        "- Location changes (new places discovered, destruction)\n"
-        "- Important objects or items introduced\n\n"
-        "Format: key: value (e.g. 'throne_status: King overthrown by rebels')\n"
-        "Return 1-3 updates ONLY if significant events occurred.\n"
-        "If nothing important happened, reply with: no changes\n\n"
-        f"Messages:\n{snippet}\n\n"
-        "New facts:"
-    )
-
-    messages = [
-        {"role": "system", "content": "You track key facts about a shared fictional world. Be specific and concise."},
-        {"role": "user", "content": prompt}
-    ]
-
-    try:
-        response = await get_kobold_response(messages)
-        cleaned = response.strip().lower()
-
-        if cleaned in ["", "no changes", "none", "no updates"]:
-            logger.debug(f"[World] No updates for server {server_id}")
-            return
-
-        # Parse key:value pairs
-        updates_count = 0
-        for line in response.splitlines():
-            match = re.match(r"^\s*([^:]+)\s*:\s*(.+)$", line)
-            if match:
-                key, value = match.groups()
-                key_clean = key.strip().lower().replace(" ", "_")
-                await add_world_fact(server_id, key_clean, value.strip())
-                updates_count += 1
-
-        if updates_count > 0:
-            logger.info(f"[World Updated] Server {server_id}: {updates_count} facts")
-
-    except Exception as e:
-        logger.exception(f"[World Summarizer Error] {e}")
-
-def add_to_world_history(server_id: str, author: str, content: str):
-    if server_id not in world_histories:
-        world_histories[server_id] = []
-    world_histories[server_id].append({"author": author, "content": content})
-    if len(world_histories[server_id]) > 50:
-        world_histories[server_id] = world_histories[server_id][-50:]
-
-async def maybe_update_world(server_id: str):    
-    history = world_histories.get(server_id, [])
-    
-    # Need minimum messages
-    if len(history) < WORLD_UPDATE_MESSAGE_THRESHOLD:
-        return
-
-    now = datetime.datetime.now(datetime.timezone.utc).timestamp()
-    last_update = world_update_cooldowns.get(server_id, 0)
-
-    # Check cooldown
-    if now - last_update < WORLD_UPDATE_COOLDOWN:
-        return
-
-    # Perform update
-    await summarize_world_and_update(server_id, history)
-    world_update_cooldowns[server_id] = now
-    
-    # Keep some history for context
-    world_histories[server_id] = world_histories[server_id][-10:]
+    return header + "\n" + "\n".join(facts)
 
 async def delete_world_entry(server_id: str, key: str):
     async with db_pool.get_connection() as db:
@@ -1126,36 +1065,14 @@ async def list_world_facts(server_id: str) -> list:
             SELECT key, value, last_updated 
             FROM world_state 
             WHERE server_id = ?
-            ORDER BY last_updated DESC
+            ORDER BY key ASC
         """, (server_id,)) as cursor:
             return [
-                {
-                    "key": row[0],
-                    "value": row[1],
-                    "updated": row[2]
-                }
+                {"key": row[0], "value": row[1], "updated": row[2]}
                 async for row in cursor
             ]
 
-
-async def manual_world_update(server_id: str, key: str, value: str):    
+# Renamed for clarity since it's just a wrapper now
+async def manual_world_update(server_id: str, key: str, value: str) -> bool:    
     key_clean = key.lower().replace(" ", "_")
-    await add_world_fact(server_id, key_clean, value)
-    logger.info(f"[World Manual Update] {server_id}: {key_clean} = {value}")
-
-# ============================================================================
-# CONTEXT BUILDER
-# ============================================================================
-async def build_context(user_id: str, username: str, server_id: str | None = None) -> list:
-    context_msgs = []
-
-    # World context
-    if server_id:
-        world_context = await get_world_context(server_id)
-        if world_context:
-            context_msgs.append({
-                "role": "system",
-                "content": f"World context for this server:\n{world_context}"
-            })
-
-    return context_msgs
+    return await add_world_fact(server_id, key_clean, value)

@@ -1,7 +1,8 @@
 from typing import List, Dict, Optional
 from src.utils.personality_manager import get_server_personality
-from src.moderation.database import get_user_log_cached, build_context as db_build_context
+from src.moderation.database import get_user_log_cached, get_world_context
 from src.utils.history_util import trim_history
+from src.aclient import client
 
 async def build_message_context(
     history: List[Dict],
@@ -22,10 +23,23 @@ async def build_message_context(
     
     messages = [{"role": "system", "content": system_content}]
     
-    # Add personality notes and world context from database
-    context_msgs = await db_build_context(user_id, user_name, server_id)
-    if context_msgs:
-        messages.extend(context_msgs)
+    if server_id:
+        # Fetch Server and Owner names using the Discord Client
+        guild = client.get_guild(int(server_id))
+        server_name = guild.name if guild else "Unknown Server"
+        owner_name = "Unknown"
+        
+        if guild and guild.owner:
+            owner_name = guild.owner.name
+            
+        # Call the database function with the new arguments
+        world_text = await get_world_context(server_id, server_name, owner_name)
+        
+        if world_text:
+            messages.append({
+                "role": "system", 
+                "content": world_text
+            })
     
     # Add conversation history
     messages.extend(history)
@@ -43,7 +57,7 @@ async def build_dm_context(
         history=history,
         user_id=user_id,
         user_name=user_name,
-        server_id=None,  # No server context for DMs
+        server_id=None,
         conversation_type=conversation_type,
         max_tokens=2000
     )
@@ -71,7 +85,7 @@ def format_user_message(
 ) -> Dict:
     if is_dm:
         # DMs don't need name prefix since context is clear
-        return {"role": "user","name": user_name, "content": content}
+        return {"role": "user", "name": user_name, "content": content}
     else:
         # Group chats need attribution
         return {"role": "user", "name": user_name, "content": f"{user_name}: {content}"}
@@ -125,39 +139,7 @@ async def build_hierarchical_context(
     server_id: Optional[str],
     conversation_type: str
 ) -> List[Dict]:
-    # Get user notes
-    user_log = await get_user_log_cached(user_id)
-    user_notes = user_log[4] if user_log and user_log[4] else None
 
-    personality = await get_server_personality(server_id)
-    
-    # Build system prompt with context awareness
-    system_content = personality.adapt_for_context(conversation_type, user_notes)
-    
-    messages = [{"role": "system", "content": system_content}]
-    
-    # Add personality and world context
-    context_msgs = await db_build_context(user_id, user_name, server_id)
-    if context_msgs:
-        messages.extend(context_msgs)
-    
-    # Check if we should compress history
-    if should_compress_history(history):
-        older, recent = get_recent_and_older_history(history)
-        
-        # Add summary of older conversation
-        if older:
-            summary = create_history_summary(older)
-            messages.append({
-                "role": "system",
-                "content": f"Previous conversation context: {summary}"
-            })
-        
-        # Add recent messages in full
-        messages.extend(recent)
-    else:
-        # All messages are recent enough
-        messages.extend(history)
-    
-    # Final trim to token limit
-    return trim_history(messages, max_tokens=2000)
+    return await build_message_context(
+        history, user_id, user_name, server_id, conversation_type
+    )
