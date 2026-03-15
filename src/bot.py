@@ -7,7 +7,8 @@ from src.utils.history_util import trim_history
 from src.moderation.database import (init_db, increment_server_interaction, queue_increment, flush_user_logs_periodically,
                                     queue_user_log, maybe_queue_notes_update, get_user_interactions,
                                     interaction_cache, load_interaction_cache, close_connection_pool,
-                                    flush_user_logs, flush_pending_notes_periodically)
+                                    flush_user_logs, flush_pending_notes_periodically,
+                                    store_channel_memory, CHANNEL_MEMORY_INTERVAL)
 from src.moderation.logging import init_logging_db, logger, log_chat_message
 from src.commands import (admin, user, mystical, news, recommend, relationship, weather, chatgpt, images,
                         personality, web, memes, crime, finance)
@@ -22,8 +23,11 @@ from src.utils.personality_manager import personality_manager
 # CONFIGURATION
 # ============================================================================
 
-MAX_CACHED_CHANNELS = 50  # Adjust based on your bot's scale and memory constraints
-MAX_CACHED_DM_USERS = 25   # Separate limit for DM conversations
+MAX_CACHED_CHANNELS = 50
+MAX_CACHED_DM_USERS = 25
+
+# Per-channel message counters for channel memory generation
+channel_message_counts: dict = {}  # {(server_id, channel_id): int}
 
 # ============================================================================
 # CONVERSATION HISTORY CACHE (LRU)
@@ -179,7 +183,7 @@ async def handle_server_message(message):
         )
     
     # Background tasks (non-blocking)
-    await update_user_stats(server_id, user_id, user_name, history)
+    await update_user_stats(server_id, user_id, user_name, history, channel_id=channel_id)
     await log_chat_message(server_id, channel_id, user_id, user_name, "user", user_message)
 
 async def generate_and_send_response(
@@ -208,9 +212,10 @@ async def generate_and_send_response(
     # Detect conversation type
     conv_type = detect_conversation_type(user_message)
     
-    # Build context
+    # Build context (with channel_id for long-term memory retrieval)
     messages = await build_server_context(
-        history, user_id, user_name, server_id, conv_type
+        history, user_id, user_name, server_id, conv_type,
+        channel_id=channel_id
     )
     
     if image_analysis:
@@ -257,20 +262,56 @@ async def generate_and_send_response(
         logger.error(f"[Message Error] {e}")
         await message.reply("Chopperbot is currently unavailable.")
 
-async def update_user_stats(server_id, user_id, user_name, history):
-    # Queue stats updates
+async def update_user_stats(server_id, user_id, user_name, history, channel_id: str = None):
     await queue_increment(server_id, user_id)
     interaction_cache[user_id] = interaction_cache.get(user_id, 0) + 1
     await queue_user_log(user_id, user_name)
-    
-    # Get interaction count
+
     interactions = await get_user_interactions(user_id)
-    
-    # Extract user-only messages for notes
     user_history = [msg for msg in history if msg.get("role") == "user"]
-    
-    # Run these in background (non-blocking)
     asyncio.create_task(maybe_queue_notes_update(user_id, user_name, user_history, interactions))
+
+    # Channel memory: accumulate and periodically summarise
+    if channel_id and server_id:
+        key = (server_id, channel_id)
+        channel_message_counts[key] = channel_message_counts.get(key, 0) + 1
+        asyncio.create_task(
+            maybe_store_channel_memory(server_id, channel_id, history, channel_message_counts[key])
+        )
+
+async def maybe_store_channel_memory(
+    server_id: str, channel_id: str, history: list, message_count: int
+) -> None:
+    """Every CHANNEL_MEMORY_INTERVAL messages, summarise recent history and persist it."""
+    if message_count % CHANNEL_MEMORY_INTERVAL != 0:
+        return
+    if len(history) < 5:
+        return
+
+    recent = history[-20:]
+    participants = list({
+        msg.get("name") for msg in recent
+        if msg.get("role") == "user" and msg.get("name")
+    })
+
+    lines = [
+        f"{msg.get('name', 'Bot')}: {msg.get('content', '')}"
+        for msg in recent if msg.get("content")
+    ]
+    prompt = (
+        "Summarize the following Discord conversation in 2-3 sentences. "
+        "Focus on topics discussed, decisions made, and key moments.\n\n"
+        + "\n".join(lines)
+    )
+
+    try:
+        from src.utils.koboldcpp_util import get_kobold_response
+        summary = await get_kobold_response([{"role": "system", "content": prompt}])
+        if summary and summary.strip():
+            await store_channel_memory(server_id, channel_id, summary.strip(), participants)
+            logger.info(f"[Channel Memory] Stored summary for {server_id}/{channel_id}")
+    except Exception as e:
+        logger.debug(f"[Channel Memory] Failed to generate summary: {e}")
 
 # ============================================================================
 # GLOBAL ERROR HANDLER

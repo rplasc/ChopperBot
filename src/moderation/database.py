@@ -1,28 +1,51 @@
 import os
+import re
+import json
 import aiosqlite
 import asyncio
 import datetime
 import time
-import re
 from contextlib import asynccontextmanager
 from src.utils.koboldcpp_util import get_kobold_response
-from src.utils.memory_util import significant_change
 from src.moderation.logging import logger
 
-DB_PATH =  "data/user_data.db"
+DB_PATH = "data/user_data.db"
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-# User log cache configuration
-USER_LOG_CACHE_TTL = 120  # 2 minutes cache lifetime
-user_log_cache = {}  # {user_id: (log_data, timestamp)}
+# ============================================================================
+# CONFIGURATION CONSTANTS
+# ============================================================================
 
-# Connection pool configuration
+# Connection pool
 MAX_POOL_SIZE = 3
 MIN_POOL_SIZE = 2
 CONNECTION_TIMEOUT = 30
 
-# Pending notes queue for when model is unreachable
-pending_notes_queue = asyncio.Queue()
+# User log cache
+USER_LOG_CACHE_TTL = 120  # seconds
+
+# Interaction batch writer
+BATCH_SIZE = 10
+BATCH_TIMEOUT = 2.0   # seconds to wait before flushing an incomplete batch
+FLUSH_INTERVAL = 5.0  # seconds between forced flushes
+
+# Personality notes
+NOTES_UPDATE_INTERVAL = 10   # regenerate notes every N messages per user
+MAX_WORLD_FACTS = 15         # hard limit to prevent context bloat
+
+# Channel long-term memory
+CHANNEL_MEMORY_INTERVAL = 25  # store a channel summary every N messages
+MAX_CHANNEL_MEMORIES = 50     # oldest pruned when exceeded
+
+# ============================================================================
+# IN-MEMORY STATE
+# ============================================================================
+
+user_log_cache: dict = {}     # {user_id: (log_data, timestamp)}
+user_log_queue: dict = {}     # pending flush buffer
+interaction_cache: dict = {}  # {user_id: interaction_count}
+write_queue: asyncio.Queue = asyncio.Queue()
+pending_notes_queue: asyncio.Queue = asyncio.Queue()
 notes_flush_task = None
 
 class ConnectionPool:
@@ -183,11 +206,171 @@ async def init_db():
         await db.execute("CREATE INDEX IF NOT EXISTS idx_civil_defendant ON civil_cases (defendant_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_civil_server ON civil_cases (server_id)")
 
+        # ---- RAG: user_memories ----
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_memories (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    TEXT NOT NULL,
+                category   TEXT NOT NULL,
+                content    TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_user_memories_user ON user_memories (user_id)")
+        await db.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS user_memories_fts USING fts5(
+                content,
+                content='user_memories',
+                content_rowid='id',
+                tokenize='porter unicode61'
+            )
+        """)
+        await db.execute("""
+            CREATE TRIGGER IF NOT EXISTS umem_fts_insert
+            AFTER INSERT ON user_memories BEGIN
+                INSERT INTO user_memories_fts(rowid, content) VALUES (new.id, new.content);
+            END
+        """)
+        await db.execute("""
+            CREATE TRIGGER IF NOT EXISTS umem_fts_delete
+            AFTER DELETE ON user_memories BEGIN
+                INSERT INTO user_memories_fts(user_memories_fts, rowid, content)
+                VALUES ('delete', old.id, old.content);
+            END
+        """)
+        await db.execute("""
+            CREATE TRIGGER IF NOT EXISTS umem_fts_update
+            AFTER UPDATE ON user_memories BEGIN
+                INSERT INTO user_memories_fts(user_memories_fts, rowid, content)
+                VALUES ('delete', old.id, old.content);
+                INSERT INTO user_memories_fts(rowid, content) VALUES (new.id, new.content);
+            END
+        """)
+
+        # ---- RAG: world_state_fts ----
+        await db.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS world_state_fts USING fts5(
+                key, value,
+                content='world_state',
+                content_rowid='rowid',
+                tokenize='porter unicode61'
+            )
+        """)
+        await db.execute("""
+            CREATE TRIGGER IF NOT EXISTS wstate_fts_insert
+            AFTER INSERT ON world_state BEGIN
+                INSERT INTO world_state_fts(rowid, key, value) VALUES (new.rowid, new.key, new.value);
+            END
+        """)
+        await db.execute("""
+            CREATE TRIGGER IF NOT EXISTS wstate_fts_delete
+            AFTER DELETE ON world_state BEGIN
+                INSERT INTO world_state_fts(world_state_fts, rowid, key, value)
+                VALUES ('delete', old.rowid, old.key, old.value);
+            END
+        """)
+        await db.execute("""
+            CREATE TRIGGER IF NOT EXISTS wstate_fts_update
+            AFTER UPDATE ON world_state BEGIN
+                INSERT INTO world_state_fts(world_state_fts, rowid, key, value)
+                VALUES ('delete', old.rowid, old.key, old.value);
+                INSERT INTO world_state_fts(rowid, key, value) VALUES (new.rowid, new.key, new.value);
+            END
+        """)
+
+        # ---- RAG: channel_memories ----
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS channel_memories (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                server_id    TEXT NOT NULL,
+                channel_id   TEXT NOT NULL,
+                summary      TEXT NOT NULL,
+                participants TEXT NOT NULL,
+                created_at   TEXT NOT NULL
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_channel_memories_lookup
+            ON channel_memories (server_id, channel_id)
+        """)
+        await db.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS channel_memories_fts USING fts5(
+                summary,
+                content='channel_memories',
+                content_rowid='id',
+                tokenize='porter unicode61'
+            )
+        """)
+        await db.execute("""
+            CREATE TRIGGER IF NOT EXISTS cmem_fts_insert
+            AFTER INSERT ON channel_memories BEGIN
+                INSERT INTO channel_memories_fts(rowid, summary) VALUES (new.id, new.summary);
+            END
+        """)
+        await db.execute("""
+            CREATE TRIGGER IF NOT EXISTS cmem_fts_delete
+            AFTER DELETE ON channel_memories BEGIN
+                INSERT INTO channel_memories_fts(channel_memories_fts, rowid, summary)
+                VALUES ('delete', old.id, old.summary);
+            END
+        """)
+        await db.execute("""
+            CREATE TRIGGER IF NOT EXISTS cmem_fts_update
+            AFTER UPDATE ON channel_memories BEGIN
+                INSERT INTO channel_memories_fts(channel_memories_fts, rowid, summary)
+                VALUES ('delete', old.id, old.summary);
+                INSERT INTO channel_memories_fts(rowid, summary) VALUES (new.id, new.summary);
+            END
+        """)
+
+        await db.commit()
+
+        # ---- Migration: split legacy personality_notes blobs into user_memories ----
+        cursor = await db.execute(
+            "SELECT user_id, personality_notes FROM user_logs "
+            "WHERE personality_notes IS NOT NULL AND personality_notes != ''"
+        )
+        legacy_rows = await cursor.fetchall()
+        await cursor.close()
+
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        for user_id, notes in legacy_rows:
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM user_memories WHERE user_id = ?", (user_id,)
+            )
+            count = (await cursor.fetchone())[0]
+            await cursor.close()
+            if count > 0:
+                continue
+            await db.execute(
+                "INSERT INTO user_memories (user_id, category, content, created_at, updated_at) "
+                "VALUES (?, 'trait', ?, ?, ?)",
+                (user_id, notes.strip(), now, now)
+            )
+
+        await db.commit()
+
+        # ---- FTS5 backfill for existing rows ----
+        cursor = await db.execute("SELECT COUNT(*) FROM user_memories_fts")
+        if (await cursor.fetchone())[0] == 0:
+            await db.execute(
+                "INSERT INTO user_memories_fts(rowid, content) SELECT id, content FROM user_memories"
+            )
+        await cursor.close()
+
+        cursor = await db.execute("SELECT COUNT(*) FROM world_state_fts")
+        if (await cursor.fetchone())[0] == 0:
+            await db.execute(
+                "INSERT INTO world_state_fts(rowid, key, value) SELECT rowid, key, value FROM world_state"
+            )
+        await cursor.close()
+
         await db.commit()
 
     await init_connection_pool()
 
-async def delete_user_data(user_id: str):
+async def delete_user_data(user_id: str) -> None:
     async with db_pool.get_connection() as db:
         await db.execute("DELETE FROM user_logs WHERE user_id = ?", (user_id,))
         await db.execute("DELETE FROM server_interactions WHERE user_id = ?", (user_id,))
@@ -213,14 +396,8 @@ async def reset_database():
 # ============================================================================
 # SERVER INTERACTIONS TRACKER
 # ============================================================================
-write_queue = asyncio.Queue()
 
-# Batching configuration
-BATCH_SIZE = 10           # Process up to 20 increments at once
-BATCH_TIMEOUT = 2.0       # Wait max 1 second to accumulate batch
-FLUSH_INTERVAL = 5.0      # Force flush every 5 seconds even with small batches
-
-async def queue_increment(server_id: str, user_id: str):
+async def queue_increment(server_id: str, user_id: str) -> None:
     await write_queue.put((server_id, user_id))
 
 async def increment_server_interaction():
@@ -294,9 +471,9 @@ async def show_server_interactions_user(server_id: str, user_id: str) -> int:
             count = row[0] if row else 0
             return count
     except aiosqlite.Error as e:
-        print(f"Database error in show_server_interactions_user: {e}")
+        logger.error(f"Database error in show_server_interactions_user: {e}")
 
-async def show_server_interactions_leaderboard(server_id: str):
+async def show_server_interactions_leaderboard(server_id: str) -> list:
     try:
         async with db_pool.get_connection() as db:
             cursor = await db.execute(
@@ -306,18 +483,13 @@ async def show_server_interactions_leaderboard(server_id: str):
             top_users = await cursor.fetchall()        
             return top_users
     except aiosqlite.Error as e:
-        print(f"Database error in show_server_interactions_leaderboard: {e}")
+        logger.error(f"Database error in show_server_interactions_leaderboard: {e}")
 
 # ============================================================================
 # USER LOGS
 # ============================================================================
-user_log_queue = {}
-interaction_cache = {}  
 
-# track how often to refresh notes
-NOTES_UPDATE_INTERVAL = 10   # every 10 messages per user
-
-async def queue_user_log(user_id: str, username: str, notes: str =None):
+async def queue_user_log(user_id: str, username: str, notes: str = None) -> None:
     record = user_log_queue.get(user_id, {
         "username": username,
         "interactions": 0,
@@ -382,16 +554,19 @@ async def flush_pending_notes_periodically():
             if is_update:
                 old_notes = pending_item.get("old_notes", "")
                 notes = await _try_update_notes(username, history, old_notes)
+                if notes:
+                    await _parse_and_store_facts(user_id, notes)
+                    logger.info(f"[Flushed Pending Notes] {username}")
+                else:
+                    await pending_notes_queue.put(pending_item)
+                    logger.debug(f"[Notes Flush Failed] Requeued for {username}")
             else:
                 notes = await _try_generate_notes(user_id, username, history)
-            
-            if notes:
-                await update_personality_notes_with_username(user_id, username, notes)
-                logger.info(f"[Flushed Pending Notes] {username}")
-            else:
-                # Failed again, put it back in queue
-                await pending_notes_queue.put(pending_item)
-                logger.debug(f"[Notes Flush Failed] Requeued for {username}")
+                if notes:
+                    logger.info(f"[Flushed Pending Notes] {username}")
+                else:
+                    await pending_notes_queue.put(pending_item)
+                    logger.debug(f"[Notes Flush Failed] Requeued for {username}")
                 
         except asyncio.TimeoutError:
             continue
@@ -399,67 +574,74 @@ async def flush_pending_notes_periodically():
             logger.exception(f"[Notes Flush Error] {e}")
 
 async def _try_generate_notes(user_id: str, username: str, history: list) -> str | None:
+    """Generate structured per-category facts and store them as user_memories rows.
+
+    Returns the rebuilt personality_notes blob, or None if the model is unreachable
+    or there are too few messages to analyse.
+    """
     user_texts = [
-        h["content"] for h in history 
+        h["content"] for h in history
         if h.get("role") == "user" and h.get("name") == username
     ]
-    
+
     if len(user_texts) < 3:
         return None
-    
+
     prompt = (
-        f"Analyze {username}'s chat messages and summarize their personality traits, "
-        "interests, and communication style in 1-2 sentences. "
-        "Be specific, neutral, and descriptive.\n\n"
+        f"Analyze {username}'s chat messages and extract 3-5 distinct facts.\n"
+        "For each fact, start the line with one of these tags: "
+        "[trait], [interest], [preference], or [behavior].\n"
+        "Output one fact per line. Be specific and neutral.\n\n"
         f"Messages from {username}:\n"
+        + "\n".join(user_texts[-15:])
     )
-    
-    # Use last 15 messages from THIS user only
-    prompt += "\n".join(user_texts[-15:])
-    
+
     try:
         response = await get_kobold_response([{"role": "system", "content": prompt}])
-        logger.debug(f"Generated notes for {user_id}.")
-        return response.strip()
-    except Exception as e:
+        if not response or not response.strip():
+            return None
+        await _parse_and_store_facts(user_id, response)
+        logger.debug(f"Generated structured notes for {user_id}.")
+        # Return the rebuilt blob so callers that expect a string still work
+        log = await get_user_log(user_id)
+        return log[4] if log else None
+    except Exception:
         logger.debug(f"[Notes Generation Failed - Model Unreachable] {user_id}")
         return None
 
 async def _try_update_notes(username: str, history: list, old_notes: str) -> str | None:
+    """Ask the model for NEW facts only (incremental update).
 
+    Returns the raw model response (to be parsed by the caller), or None if
+    the model is unreachable or nothing new was found.
+    """
     user_msgs = [
-        h["content"] for h in history 
+        h["content"] for h in history
         if h.get("role") == "user" and h.get("name") == username
     ]
-    
+
     if len(user_msgs) < 3:
         return None
-    
+
     recent = "\n".join(user_msgs[-10:])
-    
     if not recent.strip():
         return None
-    
+
     prompt = (
-        f"Existing notes about {username}: {old_notes}\n\n"
+        f"Existing facts about {username}: {old_notes}\n\n"
         f"Recent messages from {username}:\n{recent}\n\n"
-        "Update the personality summary based on new information. "
-        "Keep it 1-2 sentences, neutral, and descriptive. "
-        "If nothing new is learned, reply with 'no changes'."
+        "List only NEW facts not already covered above.\n"
+        "Prefix each with [trait], [interest], [preference], or [behavior]. "
+        "One fact per line. If nothing new, reply with 'no changes'."
     )
 
     try:
         response = await get_kobold_response([{"role": "system", "content": prompt}])
         cleaned = response.strip()
-
         if cleaned.lower() in ["", "no changes", "none"]:
             return None
-        
-        if not significant_change(old_notes, cleaned):
-            return None
-
         return cleaned
-    except Exception as e:
+    except Exception:
         logger.debug(f"[Notes Update Failed - Model Unreachable] {username}")
         return None
 
@@ -480,7 +662,7 @@ async def generate_personality_notes(user_id: str, username:str, history: list):
     
     return notes
 
-async def update_personality_notes(user_id: str, notes: str):
+async def update_personality_notes(user_id: str, notes: str) -> None:
     async with db_pool.get_connection() as db:
         await db.execute("""
             INSERT INTO user_logs (user_id, personality_notes)
@@ -493,7 +675,7 @@ async def update_personality_notes(user_id: str, notes: str):
     if user_id in user_log_cache:
         del user_log_cache[user_id]
 
-async def update_personality_notes_with_username(user_id: str, username: str, notes: str):
+async def update_personality_notes_with_username(user_id: str, username: str, notes: str) -> None:
 
     async with db_pool.get_connection() as db:
         # Check if user exists
@@ -526,7 +708,7 @@ async def get_personality_context(user_id: str, username: str) -> str:
         return f"Notes about {username}: {log[4]}"
     return ""
 
-async def maybe_queue_notes_update(user_id: str, username: str, history: list, interactions: int):    
+async def maybe_queue_notes_update(user_id: str, username: str, history: list, interactions: int) -> None:
     if interactions % NOTES_UPDATE_INTERVAL != 0:
         return
 
@@ -552,7 +734,7 @@ async def maybe_queue_notes_update(user_id: str, username: str, history: list, i
         
         # Try to update with fallback queueing
         notes = await _try_update_notes(username, history, old_notes)
-        
+
         if notes is None:
             # Model unreachable, queue for later
             await pending_notes_queue.put({
@@ -564,8 +746,9 @@ async def maybe_queue_notes_update(user_id: str, username: str, history: list, i
             })
             logger.info(f"[Notes Update Queued] {username}")
             return
-        
-        await update_personality_notes_with_username(user_id, username, notes)
+
+        # Store each new fact as a structured user_memory row
+        await _parse_and_store_facts(user_id, notes)
         logger.info(f"[Notes Updated] {username}: {notes}")
     else:
         notes = await generate_personality_notes(user_id, username, history)
@@ -630,7 +813,7 @@ async def load_interaction_cache():
                 user_id, interactions = row
                 interaction_cache[user_id] = interactions
 
-    print(f"[Cache Loaded] {len(interaction_cache)} users restored from DB")
+    logger.info(f"[Cache Loaded] {len(interaction_cache)} users restored from DB")
 
 async def generate_notes_from_messages(server_id: str, channel_id: str, messages: list, min_messages: int = 50) -> dict:
 
@@ -725,7 +908,7 @@ async def load_server_personality(server_id: str) -> dict | None:
             }
         return None
 
-async def delete_server_personality(server_id: str):
+async def delete_server_personality(server_id: str) -> None:
     async with db_pool.get_connection() as db:
         await db.execute(
             "DELETE FROM server_personalities WHERE server_id = ?",
@@ -753,7 +936,7 @@ async def load_all_server_personalities() -> dict:
     
     return personalities
 
-async def set_server_personality_lock(server_id: str, locked: bool):
+async def set_server_personality_lock(server_id: str, locked: bool) -> None:
     async with db_pool.get_connection() as db:
         await db.execute("""
             INSERT INTO server_personalities (server_id, personality_type, personality_value, is_custom, locked)
@@ -855,7 +1038,7 @@ async def get_server_most_wanted(server_id: str, limit: int = 10):
         
         return most_wanted
 
-async def clear_criminal_record(user_id: str, server_id: str):
+async def clear_criminal_record(user_id: str, server_id: str) -> None:
     async with db_pool.get_connection() as db:
         await db.execute("""
             DELETE FROM criminal_records
@@ -988,10 +1171,67 @@ async def get_civil_record(user_id: str, server_id: str):
         }
 
 # ============================================================================
-# WORLD MEMORY SYSTEM
+# RAG HELPERS
 # ============================================================================
 
-MAX_WORLD_FACTS = 15  # Hard limit to prevent context bloat
+def _fts_escape(query: str) -> str:
+    """Strip FTS5 operator characters so user messages are safe to pass to MATCH."""
+    cleaned = re.sub(r'[^\w\s]', ' ', query).strip()
+    return cleaned if cleaned else '*'
+
+async def add_user_memory(user_id: str, category: str, content: str) -> None:
+    """Store a single structured fact about a user and keep the blob in sync."""
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    async with db_pool.get_connection() as db:
+        await db.execute(
+            "INSERT INTO user_memories (user_id, category, content, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (user_id, category, content.strip(), now, now)
+        )
+        await db.commit()
+    await _sync_personality_notes_blob(user_id)
+
+async def _sync_personality_notes_blob(user_id: str) -> None:
+    """Rebuild user_logs.personality_notes from all user_memories rows.
+
+    Keeps every consumer of log[4] working without modification.
+    """
+    async with db_pool.get_connection() as db:
+        cursor = await db.execute(
+            "SELECT category, content FROM user_memories WHERE user_id = ? ORDER BY created_at ASC",
+            (user_id,)
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+
+        if not rows:
+            return
+
+        blob = "; ".join(f"[{row[0]}] {row[1]}" for row in rows)
+        await db.execute(
+            "UPDATE user_logs SET personality_notes = ? WHERE user_id = ?",
+            (blob, user_id)
+        )
+        await db.commit()
+
+    invalidate_user_log_cache(user_id)
+
+async def _parse_and_store_facts(user_id: str, raw_text: str) -> None:
+    """Parse LLM-generated [category] fact lines and store each as a user_memory row."""
+    lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
+    for line in lines:
+        m = re.match(r'\[(trait|interest|preference|behavior)\]\s*(.*)', line, re.IGNORECASE)
+        if m:
+            category = m.group(1).lower()
+            content = m.group(2).strip()
+        else:
+            category, content = 'trait', line
+        if content:
+            await add_user_memory(user_id, category, content)
+
+# ============================================================================
+# WORLD MEMORY SYSTEM
+# ============================================================================
 
 async def add_world_fact(server_id: str, key: str, value: str) -> bool:
     async with db_pool.get_connection() as db:
@@ -1046,7 +1286,7 @@ async def get_world_context(server_id: str, server_name: str = "Unknown", owner_
     
     return header + "\n" + "\n".join(facts)
 
-async def delete_world_entry(server_id: str, key: str):
+async def delete_world_entry(server_id: str, key: str) -> None:
     async with db_pool.get_connection() as db:
         await db.execute(
             "DELETE FROM world_state WHERE server_id = ? AND key = ?",
@@ -1054,7 +1294,7 @@ async def delete_world_entry(server_id: str, key: str):
         )
         await db.commit()
 
-async def delete_world_context(server_id: str):
+async def delete_world_context(server_id: str) -> None:
     async with db_pool.get_connection() as db:
         await db.execute("DELETE FROM world_state WHERE server_id = ?", (server_id,))
         await db.commit()
@@ -1072,7 +1312,142 @@ async def list_world_facts(server_id: str) -> list:
                 async for row in cursor
             ]
 
-# Renamed for clarity since it's just a wrapper now
-async def manual_world_update(server_id: str, key: str, value: str) -> bool:    
+async def manual_world_update(server_id: str, key: str, value: str) -> bool:
     key_clean = key.lower().replace(" ", "_")
     return await add_world_fact(server_id, key_clean, value)
+
+# ============================================================================
+# RAG RETRIEVAL
+# ============================================================================
+
+async def get_relevant_user_memories(
+    user_id: str, query: str, limit: int = 3
+) -> list[str]:
+    """Return the most relevant user memory facts for the given query via FTS5 BM25.
+
+    Falls back to the most-recent rows when the query is empty or FTS fails.
+    """
+    escaped = _fts_escape(query)
+    if escaped and escaped != '*':
+        try:
+            async with db_pool.get_connection() as db:
+                cursor = await db.execute("""
+                    SELECT um.content
+                    FROM user_memories_fts
+                    JOIN user_memories um ON user_memories_fts.rowid = um.id
+                    WHERE user_memories_fts MATCH ?
+                      AND um.user_id = ?
+                    ORDER BY rank
+                    LIMIT ?
+                """, (escaped, user_id, limit))
+                rows = await cursor.fetchall()
+                await cursor.close()
+            if rows:
+                return [row[0] for row in rows]
+        except Exception as e:
+            logger.error(f"[RAG] user_memories FTS query failed for {user_id}: {e}")
+
+    # Fallback: return most-recent memories regardless of relevance
+    try:
+        async with db_pool.get_connection() as db:
+            cursor = await db.execute(
+                "SELECT content FROM user_memories WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+                (user_id, limit)
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
+        return [row[0] for row in rows]
+    except Exception as e:
+        logger.error(f"[RAG] user_memories fallback failed for {user_id}: {e}")
+        return []
+
+async def get_relevant_world_facts(
+    server_id: str, query: str, limit: int = 5
+) -> list[dict]:
+    """Return the most relevant world_state facts for the given query via FTS5 BM25.
+
+    Falls back to all facts (original behaviour) on empty query or FTS failure.
+    """
+    escaped = _fts_escape(query)
+    if escaped and escaped != '*':
+        try:
+            async with db_pool.get_connection() as db:
+                cursor = await db.execute("""
+                    SELECT ws.key, ws.value
+                    FROM world_state_fts
+                    JOIN world_state ws ON world_state_fts.rowid = ws.rowid
+                    WHERE world_state_fts MATCH ?
+                      AND ws.server_id = ?
+                    ORDER BY rank
+                    LIMIT ?
+                """, (escaped, server_id, limit))
+                rows = await cursor.fetchall()
+                await cursor.close()
+            if rows:
+                return [{"key": row[0], "value": row[1]} for row in rows]
+        except Exception as e:
+            logger.error(f"[RAG] world_state FTS query failed for {server_id}: {e}")
+
+    # Fallback: return all facts (preserves original behaviour)
+    return await list_world_facts(server_id)
+
+async def store_channel_memory(
+    server_id: str,
+    channel_id: str,
+    summary: str,
+    participants: list[str]
+) -> None:
+    """Persist a summarised memory of a significant channel exchange."""
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    async with db_pool.get_connection() as db:
+        # Enforce cap — delete oldest entry if at limit
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM channel_memories WHERE server_id = ? AND channel_id = ?",
+            (server_id, channel_id)
+        )
+        count = (await cursor.fetchone())[0]
+        await cursor.close()
+
+        if count >= MAX_CHANNEL_MEMORIES:
+            await db.execute("""
+                DELETE FROM channel_memories WHERE id = (
+                    SELECT id FROM channel_memories
+                    WHERE server_id = ? AND channel_id = ?
+                    ORDER BY created_at ASC LIMIT 1
+                )
+            """, (server_id, channel_id))
+
+        await db.execute("""
+            INSERT INTO channel_memories (server_id, channel_id, summary, participants, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (server_id, channel_id, summary.strip(), json.dumps(participants), now))
+        await db.commit()
+
+async def get_relevant_channel_memories(
+    server_id: str,
+    channel_id: str,
+    query: str,
+    limit: int = 3
+) -> list[str]:
+    """Return the most relevant channel memory summaries for the given query via FTS5 BM25."""
+    escaped = _fts_escape(query)
+    if not escaped or escaped == '*':
+        return []
+    try:
+        async with db_pool.get_connection() as db:
+            cursor = await db.execute("""
+                SELECT cm.summary
+                FROM channel_memories_fts
+                JOIN channel_memories cm ON channel_memories_fts.rowid = cm.id
+                WHERE channel_memories_fts MATCH ?
+                  AND cm.server_id = ?
+                  AND cm.channel_id = ?
+                ORDER BY rank
+                LIMIT ?
+            """, (escaped, server_id, channel_id, limit))
+            rows = await cursor.fetchall()
+            await cursor.close()
+        return [row[0] for row in rows]
+    except Exception as e:
+        logger.error(f"[RAG] channel_memories FTS query failed for {server_id}/{channel_id}: {e}")
+        return []
