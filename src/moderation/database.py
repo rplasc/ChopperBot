@@ -473,14 +473,14 @@ async def show_server_interactions_user(server_id: str, user_id: str) -> int:
     except aiosqlite.Error as e:
         logger.error(f"Database error in show_server_interactions_user: {e}")
 
-async def show_server_interactions_leaderboard(server_id: str) -> list:
+async def show_server_interactions_leaderboard(server_id: str, limit: int = 10) -> list:
     try:
         async with db_pool.get_connection() as db:
             cursor = await db.execute(
-                "SELECT user_id, count FROM server_interactions WHERE server_id=? ORDER BY count DESC LIMIT 10",
-                (server_id,)
+                "SELECT user_id, count FROM server_interactions WHERE server_id=? ORDER BY count DESC LIMIT ?",
+                (server_id, limit)
             )
-            top_users = await cursor.fetchall()        
+            top_users = await cursor.fetchall()
             return top_users
     except aiosqlite.Error as e:
         logger.error(f"Database error in show_server_interactions_leaderboard: {e}")

@@ -1,3 +1,4 @@
+import discord
 import random
 import datetime
 from discord import Interaction, Member, Embed, Color
@@ -12,6 +13,160 @@ from src.moderation.database import (
 )
 from src.utils.response_generator import generate_command_response, generate_roleplay_response
 from src.moderation.logging import logger
+
+# ============================================================================
+# VIEWS
+# ============================================================================
+
+class ArrestView(discord.ui.View):
+    def __init__(self, criminal_name: str, crime: str, officer_name: str,
+                 years: int, server_id: str, avatar_url: str):
+        super().__init__(timeout=120)
+        self.criminal_name = criminal_name
+        self.crime = crime
+        self.officer_name = officer_name
+        self.years = years
+        self.server_id = server_id
+        self.avatar_url = avatar_url
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+
+    @discord.ui.button(label="Appeal Verdict", style=discord.ButtonStyle.danger, emoji="⚖️")
+    async def appeal_verdict(self, interaction: Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        button.disabled = True
+
+        appeal_outcome = random.choices(
+            ["freed", "reduced", "retried"], weights=[50, 30, 20], k=1
+        )[0]
+
+        if appeal_outcome == "freed":
+            prompt = (
+                f"On appeal, {self.criminal_name} has been FREED! Their conviction for "
+                f"'{self.crime}' was overturned. Write a dramatic courtroom scene (3 sentences) "
+                f"where they walk free and Officer {self.officer_name} is humiliated."
+            )
+            embed_title = "🎉 CONVICTION OVERTURNED 🎉"
+            embed_color = Color.green()
+            new_outcome = "Freed on Appeal"
+        elif appeal_outcome == "reduced":
+            new_years = max(1, self.years // 3)
+            prompt = (
+                f"On appeal, {self.criminal_name}'s sentence for '{self.crime}' was reduced "
+                f"from {self.years} years to {new_years} years. Write a dramatic courtroom scene "
+                f"(3 sentences). Partial victory!"
+            )
+            embed_title = "📉 SENTENCE REDUCED 📉"
+            embed_color = Color.orange()
+            new_outcome = f"Reduced to {new_years} years"
+        else:
+            prompt = (
+                f"The appeal for {self.criminal_name}'s conviction for '{self.crime}' has resulted "
+                f"in a RETRIAL! Write a dramatic courtroom scene (3 sentences). Justice delayed!"
+            )
+            embed_title = "🔄 RETRIAL ORDERED 🔄"
+            embed_color = Color.blue()
+            new_outcome = "Retrial Ordered"
+
+        try:
+            report = await generate_command_response(
+                prompt=prompt, server_id=self.server_id,
+                use_personality=False, temperature=1.0, max_tokens=250
+            )
+        except Exception as e:
+            logger.error(f"[Appeal Error] {e}")
+            report = f"The appeals court has ruled: {new_outcome}."
+
+        embed = Embed(title=embed_title, description=report, color=embed_color)
+        embed.add_field(name="Appellant", value=self.criminal_name, inline=True)
+        embed.add_field(name="Original Crime", value=self.crime, inline=True)
+        embed.add_field(name="Appeal Outcome", value=new_outcome, inline=True)
+        if self.avatar_url:
+            embed.set_thumbnail(url=self.avatar_url)
+        embed.set_footer(text="⚖️ One appeal per arrest.")
+        await interaction.edit_original_response(embed=embed, view=self)
+
+
+class LawsuitView(discord.ui.View):
+    def __init__(self, plaintiff_name: str, defendant_name: str, complaint: str,
+                 original_outcome: str, original_amount: int, server_id: str):
+        super().__init__(timeout=120)
+        self.plaintiff_name = plaintiff_name
+        self.defendant_name = defendant_name
+        self.complaint = complaint
+        self.original_outcome = original_outcome
+        self.original_amount = original_amount
+        self.server_id = server_id
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+
+    @discord.ui.button(label="File Appeal", style=discord.ButtonStyle.danger, emoji="📋")
+    async def file_appeal(self, interaction: Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        button.disabled = True
+
+        appeal_outcome = random.choices(
+            ["not_guilty", "dismissed", "reduced"], weights=[50, 30, 20], k=1
+        )[0]
+
+        if appeal_outcome == "not_guilty":
+            prompt = (
+                f"On appeal, {self.defendant_name} is found NOT GUILTY! The ruling against them "
+                f"for '{self.complaint}' has been overturned. Write a dramatic courtroom reversal "
+                f"(3 sentences). {self.plaintiff_name} gets nothing."
+            )
+            embed_title = "🎉 VERDICT OVERTURNED 🎉"
+            embed_color = Color.green()
+            new_outcome = "Not Guilty on Appeal"
+            new_amount = "$0"
+        elif appeal_outcome == "dismissed":
+            prompt = (
+                f"The appeal in the case of '{self.complaint}' has been DISMISSED as frivolous. "
+                f"Write a dramatic scene (3 sentences). The original verdict stands!"
+            )
+            embed_title = "🚫 APPEAL DISMISSED 🚫"
+            embed_color = Color.red()
+            new_outcome = "Appeal Dismissed"
+            new_amount = f"${self.original_amount:,} (upheld)"
+        else:
+            reduced = max(1, self.original_amount // 4)
+            prompt = (
+                f"On appeal, the damages in the case of '{self.complaint}' were reduced from "
+                f"${self.original_amount:,} to ${reduced:,}. Write a dramatic court scene "
+                f"(3 sentences). Partial relief for {self.defendant_name}!"
+            )
+            embed_title = "📉 DAMAGES REDUCED 📉"
+            embed_color = Color.orange()
+            new_outcome = "Reduced Damages"
+            new_amount = f"${reduced:,}"
+
+        try:
+            statement = await generate_roleplay_response(
+                character_description="You are Judge ChopperBot, a dramatic and witty AI programmed to pass judgement over civil cases.",
+                scenario=prompt,
+                temperature=1.0,
+                max_tokens=250
+            )
+        except Exception as e:
+            logger.error(f"[Lawsuit Appeal Error] {e}")
+            statement = f"The appeals court has ruled: {new_outcome}."
+
+        embed = Embed(title=embed_title, description=statement, color=embed_color)
+        embed.add_field(name="Plaintiff", value=self.plaintiff_name, inline=True)
+        embed.add_field(name="Defendant", value=self.defendant_name, inline=True)
+        embed.add_field(name="Appeal Outcome", value=new_outcome, inline=True)
+        embed.add_field(name="Amount", value=new_amount, inline=True)
+        embed.set_footer(text="📋 One appeal per case.")
+        await interaction.edit_original_response(embed=embed, view=self)
+
+
+# ============================================================================
+# COMMANDS
+# ============================================================================
 
 @client.tree.command(name="arrest", description="Arrest someone for their crimes")
 async def arrest(interaction: Interaction, criminal: Member, crime: str):
@@ -188,8 +343,14 @@ async def arrest(interaction: Interaction, criminal: Member, crime: str):
     embed.add_field(name="Outcome", value=str(years), inline=True)
     embed.set_thumbnail(url=criminal.avatar.url if criminal.avatar else criminal.default_avatar.url)
     embed.set_footer(text=footer)
-    
-    await interaction.followup.send(embed=embed)
+
+    if outcome == "arrested" and isinstance(years, int):
+        avatar_url = criminal.avatar.url if criminal.avatar else criminal.default_avatar.url
+        view = ArrestView(criminal.display_name, crime, interaction.user.display_name,
+                          years, str(interaction.guild.id), avatar_url)
+        await interaction.followup.send(embed=embed, view=view)
+    else:
+        await interaction.followup.send(embed=embed)
 
 @client.tree.command(name="lawsuit", description="Take someone to court")
 async def lawsuit(interaction: Interaction, defendant: Member, complaint: str, amount: int = 0):
@@ -410,8 +571,13 @@ async def lawsuit(interaction: Interaction, defendant: Member, complaint: str, a
     
     embed.set_thumbnail(url=defendant.avatar.url if defendant.avatar else defendant.default_avatar.url)
     embed.set_footer(text=footer)
-    
-    await interaction.followup.send(embed=embed)
+
+    if outcome in ("guilty", "settled") and isinstance(final_amount, int):
+        view = LawsuitView(interaction.user.display_name, defendant.display_name,
+                           complaint, outcome, final_amount, str(interaction.guild.id))
+        await interaction.followup.send(embed=embed, view=view)
+    else:
+        await interaction.followup.send(embed=embed)
 
 @client.tree.command(name="criminal_record", description="View someone's criminal record")
 async def record(interaction: Interaction, user: Member = None):

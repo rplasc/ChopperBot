@@ -1,9 +1,68 @@
+import discord
 from io import BytesIO
 from discord import Interaction, Attachment, app_commands, Color, Embed, File
 from src.aclient import client
 from src.utils.vision_util import (is_image_attachment, get_image_metadata, analyze_discord_attachment, encode_image_to_base64)
 from src.utils.image_generation_util import (generate_image_for_discord, get_available_styles, generate_image_from_image, generate_with_style)
 from src.moderation.logging import logger
+
+# ============================================================================
+# VIEWS
+# ============================================================================
+
+class ImagineView(discord.ui.View):
+    def __init__(self, prompt: str, style: str = None):
+        super().__init__(timeout=120)
+        self.prompt = prompt
+        self.current_style = style
+
+        styles = get_available_styles()
+        if styles:
+            select = discord.ui.Select(
+                placeholder="🎨 New Style...",
+                options=[
+                    discord.SelectOption(label=s.replace("_", " ").title(), value=s)
+                    for s in styles[:25]
+                ]
+            )
+            select.callback = self.style_selected
+            self.add_item(select)
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+
+    async def _generate_and_update(self, interaction: Interaction):
+        try:
+            if self.current_style and self.current_style in get_available_styles():
+                image_bytes = await generate_with_style(self.prompt, self.current_style)
+                image_file = File(BytesIO(image_bytes), filename="generated.png")
+            else:
+                image_file = await generate_image_for_discord(self.prompt)
+        except Exception as e:
+            logger.error(f"[ImagineView Error] {e}")
+            await interaction.followup.send("❌ Image generation failed.", ephemeral=True)
+            return
+
+        embed = Embed(title="🎨 Generated Image", description=f"**Prompt:** {self.prompt}", color=Color.green())
+        if self.current_style:
+            embed.add_field(name="Style", value=self.current_style.replace("_", " ").title())
+        await interaction.edit_original_response(embed=embed, attachments=[image_file], view=self)
+
+    @discord.ui.button(label="Regenerate", style=discord.ButtonStyle.primary, emoji="🔄")
+    async def regenerate(self, interaction: Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await self._generate_and_update(interaction)
+
+    async def style_selected(self, interaction: Interaction):
+        await interaction.response.defer()
+        self.current_style = interaction.data["values"][0]
+        await self._generate_and_update(interaction)
+
+
+# ============================================================================
+# COMMANDS
+# ============================================================================
 
 @client.tree.command(name="analyze", description="Analyze an image")
 @app_commands.describe(
@@ -75,7 +134,8 @@ async def imagine(
         if style:
             embed.add_field(name="Style", value=style.title())
 
-        await interaction.followup.send(embed=embed, file=image_file)
+        view = ImagineView(prompt, style.lower() if style else None)
+        await interaction.followup.send(embed=embed, file=image_file, view=view)
         logger.info("Image generation successful")
         
     except Exception as e:

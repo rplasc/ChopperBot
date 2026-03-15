@@ -1,9 +1,72 @@
+import discord
 from discord import Interaction, Embed, Color, Member, app_commands
 from datetime import datetime, timezone
 from src.aclient import client
 from src.moderation.database import show_server_interactions_user, show_server_interactions_leaderboard, get_user_log
 from src.utils.response_generator import generate_command_response
 from src.moderation.logging import logger
+
+_PER_PAGE = 10
+
+
+async def _build_leaderboard_embed(entries: list, page: int) -> Embed:
+    total_pages = max(1, (len(entries) + _PER_PAGE - 1) // _PER_PAGE)
+    start = page * _PER_PAGE
+    page_entries = entries[start:start + _PER_PAGE]
+
+    embed = Embed(
+        title="🏆 Leaderboard",
+        description="Top yappers in decreasing order:",
+        color=Color.gold()
+    )
+    rank = start + 1
+    for user_id, yaps in page_entries:
+        try:
+            user = await client.fetch_user(int(user_id))
+        except Exception:
+            user = None
+        if user and user.bot:
+            continue
+        name = user.name if user else f"User {user_id}"
+        label = {1: "🥇", 2: "🥈", 3: "🥉"}.get(rank, f"**#{rank}**")
+        embed.add_field(name="\u200b", value=f"{label} {name}    {yaps}", inline=False)
+        rank += 1
+
+    embed.set_footer(text=f"Page {page + 1} / {total_pages}")
+    return embed
+
+
+class LeaderboardView(discord.ui.View):
+    def __init__(self, entries: list, page: int = 0):
+        super().__init__(timeout=120)
+        self.entries = entries
+        self.page = page
+        self._update_buttons()
+
+    def _update_buttons(self):
+        total_pages = max(1, (len(self.entries) + _PER_PAGE - 1) // _PER_PAGE)
+        self.prev_btn.disabled = self.page == 0
+        self.next_btn.disabled = self.page >= total_pages - 1
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+
+    @discord.ui.button(label="◀ Prev", style=discord.ButtonStyle.secondary)
+    async def prev_btn(self, interaction: Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        self.page -= 1
+        self._update_buttons()
+        embed = await _build_leaderboard_embed(self.entries, self.page)
+        await interaction.edit_original_response(embed=embed, view=self)
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary)
+    async def next_btn(self, interaction: Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        self.page += 1
+        self._update_buttons()
+        embed = await _build_leaderboard_embed(self.entries, self.page)
+        await interaction.edit_original_response(embed=embed, view=self)
 
 @client.tree.command(name="help", description="List of all public commands")
 async def help(interaction: Interaction):
@@ -79,27 +142,19 @@ async def yaps(interaction: Interaction):
     
     await interaction.response.send_message(f'You have sent {yaps} messages so far.')
     
-@client.tree.command(name='leaderboard', description='Shows top 10 yappers in the server')
+@client.tree.command(name='leaderboard', description='Shows top yappers in the server')
 async def yappers(interaction: Interaction):
+    await interaction.response.defer()
     server_id = str(interaction.guild.id)
-    top_users = await show_server_interactions_leaderboard(server_id)
-    
-    embed = Embed(title=f"Top {len(top_users)}", description='In Decreasing Order:', color=Color.gold())
-    
-    for i,  (user_id, yaps) in enumerate(top_users, start=1):
-        user = await client.fetch_user(int(user_id))
-        if user is not None and not user.bot:
-            if i == 1:
-                label = "🥇"
-            elif i == 2:
-                label = "🥈"
-            elif i == 3:
-                label = "🥉"
-            else:
-                label = f"**#{i}**"
-            embed.add_field(name="\u200b", value=f'{label} {user.name}    {yaps}', inline=False)
+    all_users = await show_server_interactions_leaderboard(server_id, limit=200)
 
-    await interaction.response.send_message(embed=embed)
+    if not all_users:
+        await interaction.followup.send("No activity recorded yet!")
+        return
+
+    embed = await _build_leaderboard_embed(all_users, page=0)
+    view = LeaderboardView(all_users, page=0)
+    await interaction.followup.send(embed=embed, view=view)
 
 @client.tree.command(name="my_profile", description="See your ChopperBot profile")
 async def my_profile(interaction: Interaction):
