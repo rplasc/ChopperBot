@@ -9,23 +9,43 @@ from src.moderation.logging import logger
 
 def detect_conversation_type(content: str) -> str:
     content_lower = content.lower()
-    
-    # Question detection
+
+    # Emotional first — strong feeling words override question detection
+    emotional_words = [
+        "sad", "happy", "angry", "worried", "excited", "scared", "depressed", "anxious",
+        "lonely", "frustrated", "heartbroken", "overwhelmed", "grief", "miserable", "hopeless",
+    ]
+    if any(w in content_lower for w in emotional_words):
+        return "emotional"
+
+    # Roleplay (asterisk-wrapped actions)
+    if content.count("*") >= 2 or content.startswith("*"):
+        return "roleplay"
+
+    # Technical — specific before generic question
+    technical_keywords = [
+        "code", "error", "debug", "function", "script", "syntax", "bug", "terminal",
+        "command", "api", "crash", "exception", "install", "compile", "database", "query",
+    ]
+    if any(w in content_lower for w in technical_keywords):
+        return "technical"
+
+    # Creative — specific before generic question
+    creative_keywords = [
+        "write", "story", "poem", "generate", "create", "imagine", "describe",
+        "invent", "fiction", "narrative", "lyrics", "song",
+    ]
+    if any(w in content_lower for w in creative_keywords):
+        return "creative"
+
+    # Question
     if "?" in content or any(q in content_lower for q in ["what", "how", "why", "who", "when", "where", "explain"]):
         return "question"
-    
-    # Emotional/Support detection
-    if any(word in content_lower for word in ["sad", "happy", "angry", "worried", "excited", "scared", "depressed", "anxious"]):
-        return "emotional"
-    
-    # Roleplay detection
-    if "*" in content or content.startswith("*") or content.count("*") >= 2:
-        return "roleplay"
-    
-    # Request detection
-    if any(word in content_lower for word in ["please", "can you", "could you", "would you", "help me"]):
+
+    # Request
+    if any(w in content_lower for w in ["please", "can you", "could you", "would you", "help me"]):
         return "request"
-    
+
     return "casual"
 
 def check_response_quality(response: str) -> tuple[bool, Optional[str]]:
@@ -102,17 +122,17 @@ async def generate_response(
 async def _call_kobold_api(messages: List[Dict], params: Dict) -> str:
     url = client.kobold_text_api
     
-    # Build full payload
+    # Build full payload — sampling params come from personality traits, not hardcoded values
     payload = {
         "messages": messages,
         "temperature": params.get("temperature", 0.8),
-        "top_p": 0.9,
+        "top_p": params.get("top_p", 0.9),
         "top_k": 50,
-        "frequency_penalty": 1.0,
-        "presence_penalty": 0.6,
+        "frequency_penalty": params.get("frequency_penalty", 1.0),
+        "presence_penalty": params.get("presence_penalty", 0.6),
         "repetition_penalty": params.get("repetition_penalty", 1.15),
         "max_tokens": params.get("max_tokens", 400),
-        "stop": ["\nUser:", "\nSystem:", "\nAssistant:", "\n\n\n"]
+        "stop": ["\nUser:", "\nSystem:", "\nAssistant:", "\n\n\n"],
     }
     
     async with aiohttp.ClientSession() as session:
