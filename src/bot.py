@@ -1,5 +1,7 @@
 import os
 import asyncio
+import random
+import time
 from collections import OrderedDict
 from discord import DMChannel, File, Interaction, app_commands
 from src.aclient import client
@@ -25,8 +27,52 @@ from src.utils.context_builder import (build_dm_context, build_server_context, f
 MAX_CACHED_CHANNELS = 50
 MAX_CACHED_DM_USERS = 25
 
+# Unprompted interjections: chime in after this many messages without a mention
+INTERJECT_MIN_MESSAGES = 10
+INTERJECT_MAX_MESSAGES = 15
+
+# After a generation failure, suppress unprompted/@everyone replies this long
+# so an offline LLM doesn't flood chats with "currently unavailable" messages
+LLM_OFFLINE_COOLDOWN = 300  # seconds
+
 # Per-channel message counters for channel memory generation
 channel_message_counts: dict = {}  # {(server_id, channel_id): int}
+
+# ============================================================================
+# UNPROMPTED INTERJECTIONS & LLM AVAILABILITY
+# ============================================================================
+
+interject_countdowns: dict = {}  # {(server_id, channel_id): messages until interjection}
+_llm_offline_until: float = 0.0
+
+def llm_seems_available() -> bool:
+    return time.time() >= _llm_offline_until
+
+def mark_llm_offline() -> None:
+    global _llm_offline_until
+    _llm_offline_until = time.time() + LLM_OFFLINE_COOLDOWN
+    logger.warning(f"[LLM Offline] Suppressing unprompted replies for {LLM_OFFLINE_COOLDOWN}s")
+
+def mark_llm_online() -> None:
+    global _llm_offline_until
+    _llm_offline_until = 0.0
+
+def reset_interject_countdown(server_id: str, channel_id: str) -> None:
+    interject_countdowns[(server_id, channel_id)] = random.randint(
+        INTERJECT_MIN_MESSAGES, INTERJECT_MAX_MESSAGES
+    )
+
+def should_interject(server_id: str, channel_id: str) -> bool:
+    """Count down non-mention messages; fire once the threshold is reached.
+    Never fires while the LLM is marked offline."""
+    key = (server_id, channel_id)
+    if key not in interject_countdowns:
+        reset_interject_countdown(server_id, channel_id)
+    interject_countdowns[key] -= 1
+    if interject_countdowns[key] > 0:
+        return False
+    reset_interject_countdown(server_id, channel_id)
+    return llm_seems_available()
 
 # ============================================================================
 # CONVERSATION HISTORY CACHE (LRU)
@@ -122,12 +168,15 @@ async def handle_dm_message(message):
                 server_id=None
             )
         
+        mark_llm_online()
+
         # Add to history and send
         history.append({"role": "assistant", "content": response})
         await message.reply(response)
-        
+
     except Exception as e:
         logger.exception(f"[DM Error] {e}")
+        mark_llm_offline()
         await message.channel.send("I'm currently offline. Try again later.")
 
 async def handle_server_message(message):
@@ -150,18 +199,36 @@ async def handle_server_message(message):
     # Trim history
     history[:] = trim_history(history, max_tokens=2000)
 
-    # Respond when mentioned OR when replying with images
-    should_respond = client.user.mentioned_in(message) or (
-        has_images and message.reference and 
-        message.reference.resolved and 
+    # Classify how (and whether) the bot was addressed
+    is_direct_mention = client.user in message.mentions
+    is_everyone_ping = message.mention_everyone
+    is_image_reply = bool(
+        has_images and message.reference and
+        message.reference.resolved and
         message.reference.resolved.author == client.user
     )
-    
+
+    unprompted = False
+    if is_direct_mention or is_image_reply:
+        # Directly addressed: always try, and tell the user if the LLM is down
+        should_respond, notify_on_error = True, True
+        reset_interject_countdown(server_id, channel_id)
+    elif is_everyone_ping:
+        # Ambient ping: respond only when the LLM looks up; fail silently
+        should_respond, notify_on_error = llm_seems_available(), False
+        reset_interject_countdown(server_id, channel_id)
+    else:
+        # Not addressed at all: maybe chime in after 10-15 quiet messages
+        should_respond, notify_on_error = should_interject(server_id, channel_id), False
+        unprompted = should_respond
+
     if should_respond:
         await generate_and_send_response(
-            message, history, user_id, user_name, 
+            message, history, user_id, user_name,
             server_id, channel_id, user_message,
-            has_images=has_images
+            has_images=has_images,
+            notify_on_error=notify_on_error,
+            unprompted=unprompted
         )
     
     # Background tasks (non-blocking)
@@ -169,9 +236,11 @@ async def handle_server_message(message):
     await log_chat_message(server_id, channel_id, user_id, user_name, "user", user_message)
 
 async def generate_and_send_response(
-    message, history, user_id, user_name, 
+    message, history, user_id, user_name,
     server_id, channel_id, user_message,
-    has_images=False
+    has_images=False,
+    notify_on_error=True,
+    unprompted=False
 ):
 
     image_analysis = None
@@ -206,6 +275,16 @@ async def generate_and_send_response(
             "content": f"Image analysis: {image_analysis}"
         })
 
+    if unprompted:
+        messages.append({
+            "role": "system",
+            "content": (
+                "You were not directly addressed — you're choosing to chime into "
+                "the ongoing conversation. Add a short, natural remark that fits "
+                "the current topic. Do not greet anyone or announce yourself."
+            )
+        })
+
     try:
         async with message.channel.typing():
             # Generate response
@@ -219,30 +298,35 @@ async def generate_and_send_response(
             # Sanitize output
             response = sanitize_response(response)
 
+        mark_llm_online()
+
         # Add to history
         history.append({"role": "assistant", "content": response})
 
-        # Send response (handle long messages)
+        # Send response (handle long messages); interjections go to the
+        # channel rather than replying to whoever happened to speak last
         output = to_discord_output(response)
-        
+
         if isinstance(output, File):
-            await message.reply("📄 Response was too long, see attached file:", file=output)
+            await message.channel.send("📄 Response was too long, see attached file:", file=output)
         else:
             for i, chunk in enumerate(output):
-                if i == 0:
+                if i == 0 and not unprompted:
                     await message.reply(chunk)
                 else:
                     await message.channel.send(chunk)
 
         # Log assistant message
         await log_chat_message(
-            server_id, channel_id, str(client.user.id), 
+            server_id, channel_id, str(client.user.id),
             client.user.name, "assistant", response
         )
 
     except Exception as e:
         logger.error(f"[Message Error] {e}")
-        await message.reply("Chopperbot is currently unavailable.")
+        mark_llm_offline()
+        if notify_on_error:
+            await message.reply("Chopperbot is currently unavailable.")
 
 async def update_user_stats(server_id, user_id, user_name, history, channel_id: str = None):
     await record_user_message(server_id, user_id, user_name)

@@ -128,6 +128,7 @@ docker run -d --env-file .env discord-bot
 - **Mention the bot** in any channel to get a response
 - **Reply to bot messages with images** to trigger vision analysis
 - **DM the bot** for private conversations
+- **Unprompted interjections**: the bot chimes into active channels on its own every 10–15 messages. When the LLM is unreachable, interjections and @everyone responses are suppressed (no "unavailable" spam); only direct mentions get an error reply
 
 ### World Memory System
 
