@@ -1,11 +1,10 @@
 import discord
 import os
 from dotenv import load_dotenv
-from discord import Intents, app_commands
+from discord import app_commands
 
 load_dotenv()
 
-# Creates client with Discord and OpenAI api
 class aclient(discord.Client):
     def __init__(self) -> None:
         intents = discord.Intents.default()
@@ -13,21 +12,13 @@ class aclient(discord.Client):
         intents.message_content = True
         super().__init__(intents = intents)
         self.tree = app_commands.CommandTree(self)
-        self.current_channel = None
-        self.activity = discord.Activity(type = discord.ActivityType.listening,name='chopperboi')
-        self.isPrivate = False
+        self.activity = discord.Activity(type = discord.ActivityType.listening, name='chopperboi')
 
-        # KoboldCPP Integration
+        # KoboldCPP endpoints (vision, image gen, web search; text generation
+        # goes through src.services.llm_service)
         self.kobold_text_api = os.getenv('KOBOLD_TEXT_API')
         self.kobold_web_api = os.getenv('KOBOLD_WEB_API')
         self.kobold_img_api = os.getenv('KOBOLD_IMG_API')
-        
-        # ChatGPT integration
-        self.openAI_API_key = os.getenv('OPENAI_API_KEY')
-        self.openAI_gpt_engine = os.getenv('GPT_ENGINE')
 
-        # Other API integrations
-        self.weatherAPI = os.getenv('WEATHER_API_KEY')
-        
-    
+
 client = aclient()

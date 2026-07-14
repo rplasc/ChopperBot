@@ -6,7 +6,7 @@ import asyncio
 import datetime
 import time
 from contextlib import asynccontextmanager
-from src.utils.koboldcpp_util import get_kobold_response
+from src.services.llm_service import chat_completion
 from src.services.memory_service import (
     FACT_EXTRACTION_INSTRUCTIONS,
     build_fts_query,
@@ -31,11 +31,6 @@ CONNECTION_TIMEOUT = 30
 # User log cache
 USER_LOG_CACHE_TTL = 120  # seconds
 
-# Interaction batch writer
-BATCH_SIZE = 10
-BATCH_TIMEOUT = 2.0   # seconds to wait before flushing an incomplete batch
-FLUSH_INTERVAL = 5.0  # seconds between forced flushes
-
 # Personality notes
 NOTES_UPDATE_INTERVAL = 10   # regenerate notes every N messages per user
 MAX_WORLD_FACTS = 15         # hard limit to prevent context bloat
@@ -49,11 +44,8 @@ MAX_CHANNEL_MEMORIES = 50     # oldest pruned when exceeded
 # ============================================================================
 
 user_log_cache: dict = {}     # {user_id: (log_data, timestamp)}
-user_log_queue: dict = {}     # pending flush buffer
 interaction_cache: dict = {}  # {user_id: interaction_count}
-write_queue: asyncio.Queue = asyncio.Queue()
 pending_notes_queue: asyncio.Queue = asyncio.Queue()
-notes_flush_task = None
 
 class ConnectionPool:
     def __init__(self, db_path: str, min_size: int = MIN_POOL_SIZE, max_size: int = MAX_POOL_SIZE):
@@ -137,7 +129,6 @@ def get_pool_stats():
             "pool_size": db_pool._size,
             "available_connections": db_pool._pool.qsize(),
             "max_size": db_pool.max_size,
-            "write_queue_size": write_queue.qsize(),
             "pending_notes_queue_size": pending_notes_queue.qsize()
         }
     return None
@@ -419,71 +410,35 @@ async def reset_database():
 # SERVER INTERACTIONS TRACKER
 # ============================================================================
 
-async def queue_increment(server_id: str, user_id: str) -> None:
-    await write_queue.put((server_id, user_id))
+async def record_user_message(server_id: str, user_id: str, username: str) -> None:
+    """Upsert the interaction count and user log for one message, in one
+    transaction. SQLite handles Discord-bot message rates fine without
+    batching or background flush loops."""
+    interactions = interaction_cache.get(user_id, 0) + 1
+    interaction_cache[user_id] = interactions
+    now = datetime.datetime.now(datetime.timezone.utc)
 
-async def increment_server_interaction():
-    try:
-        last_flush = time.time()
-        
-        while True:
-            batch = []
-            start_time = time.time()
-            
-            # Collect items for batch
-            while len(batch) < BATCH_SIZE:
-                time_remaining = BATCH_TIMEOUT - (time.time() - start_time)
-                
-                if time_remaining <= 0:
-                    break
-                
-                try:
-                    # Wait for next item with remaining timeout
-                    item = await asyncio.wait_for(write_queue.get(), timeout=time_remaining)
-                    batch.append(item)
-                    write_queue.task_done()
-                except asyncio.TimeoutError:
-                    break
-            
-            # Force flush if enough time has passed, even with small batch
-            time_since_flush = time.time() - last_flush
-            if not batch and time_since_flush < FLUSH_INTERVAL:
-                await asyncio.sleep(0.1)  # Brief sleep to avoid busy loop
-                continue
-            
-            if batch:
-                await _flush_interaction_batch(batch)
-                last_flush = time.time()
-                logger.debug(f"Flushed batch of {len(batch)} interaction increments")
-            
-    except Exception as e:
-        logger.exception(f"Critical error in increment_server_interaction: {e}")
-
-async def _flush_interaction_batch(batch: list):
-    if not batch:
-        return
-    
     try:
         async with db_pool.get_connection() as db:
-            # Group increments by (server_id, user_id) to handle duplicates
-            increment_counts = {}
-            for server_id, user_id in batch:
-                key = (server_id, user_id)
-                increment_counts[key] = increment_counts.get(key, 0) + 1
-            
-            # Execute all updates in a single transaction
-            for (server_id, user_id), count in increment_counts.items():
-                await db.execute("""
-                    INSERT INTO server_interactions (server_id, user_id, count)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(server_id, user_id)
-                    DO UPDATE SET count = count + ?
-                """, (server_id, user_id, count, count))
-            
+            await db.execute("""
+                INSERT INTO server_interactions (server_id, user_id, count)
+                VALUES (?, ?, 1)
+                ON CONFLICT(server_id, user_id)
+                DO UPDATE SET count = count + 1
+            """, (server_id, user_id))
+            await db.execute("""
+                INSERT INTO user_logs (user_id, username, interactions, last_seen)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    username = excluded.username,
+                    interactions = excluded.interactions,
+                    last_seen = excluded.last_seen
+            """, (user_id, username, interactions, now))
             await db.commit()
-            
     except aiosqlite.Error as e:
-        logger.error(f"Database error in _flush_interaction_batch: {e}")
+        logger.error(f"Database error in record_user_message: {e}")
+
+    invalidate_user_log_cache(user_id)
 
 async def show_server_interactions_user(server_id: str, user_id: str) -> int:
     try:
@@ -511,50 +466,7 @@ async def show_server_interactions_leaderboard(server_id: str, limit: int = 10) 
 # USER LOGS
 # ============================================================================
 
-async def queue_user_log(user_id: str, username: str, notes: str = None) -> None:
-    record = user_log_queue.get(user_id, {
-        "username": username,
-        "interactions": 0,
-        "last_seen": None
-    })
-    record["username"] = username
-    record["interactions"] += 1
-    record["last_seen"] = datetime.datetime.now(datetime.timezone.utc)
-    user_log_queue[user_id] = record
-
-async def flush_user_logs():
-    if not user_log_queue:
-        return
-    
-    global interaction_cache
-
-    async with db_pool.get_connection() as db:
-        for uid, data in user_log_queue.items():
-            interactions = interaction_cache.get(uid, data["interactions"])
-            await db.execute("""
-                INSERT INTO user_logs (user_id, username, interactions, last_seen)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET
-                    username = excluded.username,
-                    interactions = excluded.interactions,
-                    last_seen = excluded.last_seen
-            """, (uid, data["username"], interactions, data["last_seen"]))
-        await db.commit()
-
-    for uid in user_log_queue.keys():
-        if uid in user_log_cache:
-            del user_log_cache[uid]
-
-    user_log_queue.clear()
-
-async def flush_user_logs_periodically():
-    while True:
-        await flush_user_logs()
-        await asyncio.sleep(60)
-
 async def flush_pending_notes_periodically():
-    global notes_flush_task
-    
     while True:
         await asyncio.sleep(30)
         
@@ -617,7 +529,7 @@ async def _try_generate_notes(user_id: str, username: str, history: list) -> str
     )
 
     try:
-        response = await get_kobold_response([{"role": "system", "content": prompt}])
+        response = await chat_completion([{"role": "system", "content": prompt}])
         if not response or not response.strip():
             return None
         await _parse_and_store_facts(user_id, response)
@@ -656,7 +568,7 @@ async def _try_update_notes(username: str, history: list, old_notes: str) -> str
     )
 
     try:
-        response = await get_kobold_response([{"role": "system", "content": prompt}])
+        response = await chat_completion([{"role": "system", "content": prompt}])
         cleaned = response.strip()
         if cleaned.lower() in ["", "no changes", "none"]:
             return None
@@ -681,19 +593,6 @@ async def generate_personality_notes(user_id: str, username:str, history: list):
         return None
     
     return notes
-
-async def update_personality_notes(user_id: str, notes: str) -> None:
-    async with db_pool.get_connection() as db:
-        await db.execute("""
-            INSERT INTO user_logs (user_id, personality_notes)
-            VALUES (?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                personality_notes = excluded.personality_notes
-        """, (user_id, notes))
-        await db.commit()
-
-    if user_id in user_log_cache:
-        del user_log_cache[user_id]
 
 async def update_personality_notes_with_username(user_id: str, username: str, notes: str) -> None:
 
@@ -721,12 +620,6 @@ async def update_personality_notes_with_username(user_id: str, username: str, no
 
     if user_id in user_log_cache:
         del user_log_cache[user_id]
-
-async def get_personality_context(user_id: str, username: str) -> str:
-    log = await get_user_log_cached(user_id)
-    if log and log[4]:
-        return f"Notes about {username}: {log[4]}"
-    return ""
 
 async def maybe_queue_notes_update(user_id: str, username: str, history: list, interactions: int) -> None:
     if interactions % NOTES_UPDATE_INTERVAL != 0:
@@ -834,49 +727,6 @@ async def load_interaction_cache():
                 interaction_cache[user_id] = interactions
 
     logger.info(f"[Cache Loaded] {len(interaction_cache)} users restored from DB")
-
-async def generate_notes_from_messages(server_id: str, channel_id: str, messages: list, min_messages: int = 50) -> dict:
-
-    # Group messages by user
-    user_messages = {}
-    for msg in messages:
-        if msg.get("role") == "user" and msg.get("name"):
-            username = msg.get("name")
-            content = msg.get("content", "")
-            
-            # Try to extract user_id if embedded (format: "username" or could be user_id)
-            # This assumes you're storing consistent identifiers
-            if username not in user_messages:
-                user_messages[username] = []
-            user_messages[username].append(content)
-    
-    # Generate notes for users meeting threshold
-    results = {}
-    for username, messages_list in user_messages.items():
-        if len(messages_list) < min_messages:
-            continue
-        
-        # Take last 50 messages for analysis
-        recent_msgs = messages_list[-50:]
-        
-        prompt = (
-            f"Analyze {username}'s chat messages and summarize their personality traits, "
-            "interests, and communication style in 1-2 sentences. "
-            "Be specific, neutral, and descriptive.\n\n"
-            f"Messages from {username}:\n"
-            + "\n".join(recent_msgs)
-        )
-        
-        try:
-            response = await get_kobold_response([{"role": "system", "content": prompt}])
-            notes = response.strip()
-            results[username] = notes
-            logger.info(f"[Bulk Notes Generated] {username}")
-        except Exception as e:
-            logger.error(f"[Bulk Notes Error] {username}: {e}")
-            results[username] = None
-    
-    return results
 
 # ============================================================================
 # CRIMINAL RECORD FUNCTIONS

@@ -4,10 +4,9 @@ from collections import OrderedDict
 from discord import DMChannel, File, Interaction, app_commands
 from src.aclient import client
 from src.utils.history_util import trim_history
-from src.moderation.database import (init_db, increment_server_interaction, queue_increment, flush_user_logs_periodically,
-                                    queue_user_log, maybe_queue_notes_update, get_user_interactions,
-                                    interaction_cache, load_interaction_cache, close_connection_pool,
-                                    flush_user_logs, flush_pending_notes_periodically,
+from src.moderation.database import (init_db, record_user_message, maybe_queue_notes_update,
+                                    get_user_interactions, load_interaction_cache, close_connection_pool,
+                                    flush_pending_notes_periodically,
                                     store_channel_memory, CHANNEL_MEMORY_INTERVAL)
 from src.moderation.logging import init_logging_db, logger, log_chat_message
 from src.commands import (admin, user, mystical, recommend, relationship, chatgpt, images,
@@ -56,19 +55,6 @@ def get_or_create_history(server_id: str, channel_id: str) -> list:
     conversation_histories_cache[key] = []
     return conversation_histories_cache[key]
 
-def extract_user_history(history: list, user_id: str = None) -> list:
-    user_msgs = []
-    for msg in history:
-        if msg.get("role") == "user":
-            # For user-specific filtering (if needed)
-            if user_id is None or msg.get("name") == user_id:
-                user_msgs.append(msg)
-    return user_msgs
-
-def get_channel_history(server_id: str, channel_id: str) -> list:
-    key = (server_id, channel_id)
-    return conversation_histories_cache.get(key, [])
-
 # ============================================================================
 # BOT LIFECYCLE
 # ============================================================================
@@ -81,9 +67,7 @@ async def on_ready():
     await load_interaction_cache()
 
     # Background tasks
-    client.loop.create_task(increment_server_interaction())
-    client.loop.create_task(flush_user_logs_periodically())
-    client.loop.create_task(flush_pending_notes_periodically()) 
+    client.loop.create_task(flush_pending_notes_periodically())
 
     print(f'Logged in as {client.user.name}')
     logger.info(f"Logged in as {client.user.name}")
@@ -91,7 +75,6 @@ async def on_ready():
 async def shutdown():
     logger.info("Shutting down bot...")
     try:
-        await flush_user_logs()
         await close_connection_pool()
         logger.info("Shutdown complete")
     except Exception as e:
@@ -262,9 +245,7 @@ async def generate_and_send_response(
         await message.reply("Chopperbot is currently unavailable.")
 
 async def update_user_stats(server_id, user_id, user_name, history, channel_id: str = None):
-    await queue_increment(server_id, user_id)
-    interaction_cache[user_id] = interaction_cache.get(user_id, 0) + 1
-    await queue_user_log(user_id, user_name)
+    await record_user_message(server_id, user_id, user_name)
 
     interactions = await get_user_interactions(user_id)
     user_history = [msg for msg in history if msg.get("role") == "user"]
@@ -305,8 +286,8 @@ async def maybe_store_channel_memory(
     )
 
     try:
-        from src.utils.koboldcpp_util import get_kobold_response
-        summary = await get_kobold_response([{"role": "system", "content": prompt}])
+        from src.services.llm_service import chat_completion
+        summary = await chat_completion([{"role": "system", "content": prompt}])
         if summary and summary.strip():
             await store_channel_memory(server_id, channel_id, summary.strip(), participants)
             logger.info(f"[Channel Memory] Stored summary for {server_id}/{channel_id}")

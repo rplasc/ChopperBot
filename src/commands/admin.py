@@ -10,7 +10,7 @@ from src.moderation.database import (
     update_personality_notes_with_username,
     pending_notes_queue, clear_criminal_record
 )
-from src.utils.koboldcpp_util import get_kobold_response
+from src.services.llm_service import chat_completion
 from src.moderation.logging import logger
 from src.utils.permissions import is_admin, is_owner
 
@@ -330,7 +330,7 @@ async def create_notes_cmd(interaction: Interaction, message_limit: int = 500, m
             
             try:
                 
-                response = await get_kobold_response([{"role": "system", "content": prompt}])
+                response = await chat_completion([{"role": "system", "content": prompt}])
                 notes = response.strip()
                 
                 if notes:
@@ -544,8 +544,7 @@ async def health_check(interaction: Interaction):
         embed.add_field(
             name="💾 Database Pool",
             value=f"{pool_status} **Active:** {pool_stats['pool_size']}/{pool_stats['max_size']}\n"
-                  f"📊 **Available:** {pool_stats['available_connections']}\n"
-                  f"⏳ **Queue:** {pool_stats['write_queue_size']}",
+                  f"📊 **Available:** {pool_stats['available_connections']}",
             inline=True
         )
     else:
@@ -601,15 +600,11 @@ async def health_check(interaction: Interaction):
     
     tasks_healthy = True
     tasks_info = []
-    
-    # Check if write queue is processing
-    if pool_stats and pool_stats['write_queue_size'] > 100:
-        tasks_healthy = False
-        tasks_info.append("⚠️ High write queue")
-    
+
     # Check pending notes queue
     notes_queue_size = pending_notes_queue.qsize()
     if notes_queue_size > 50:
+        tasks_healthy = False
         tasks_info.append(f"⚠️ {notes_queue_size} pending notes")
     
     task_icon = "🟢" if tasks_healthy else "🟡"
@@ -734,12 +729,6 @@ async def pool_stats(interaction: Interaction):
         inline=True
     )
     
-    embed.add_field(
-        name="Write Queue",
-        value=f"**Pending:** {stats['write_queue_size']} interactions",
-        inline=True
-    )
-
     embed.add_field(
         name="Notes Queue",
         value=f"**Pending:** {stats.get('pending_notes_queue_size', 0)} updates",

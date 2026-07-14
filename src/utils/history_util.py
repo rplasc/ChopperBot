@@ -1,13 +1,7 @@
-try:
-    import tiktoken
-    _enc = tiktoken.get_encoding("cl100k_base")
-except ImportError:
-    _enc = None
-
 def count_tokens(text: str) -> int:
-    if _enc:
-        return len(_enc.encode(text))
-    return len(text.split())
+    # Rough estimate (~4 chars/token for English); good enough for trimming
+    # history to a budget without pulling in a tokenizer dependency.
+    return max(1, len(text) // 4)
 
 def trim_history(history, max_tokens: int = 2000):
     tokens_used = 0

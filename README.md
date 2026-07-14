@@ -59,7 +59,7 @@ Every high-impact slash command now has follow-up buttons or dropdowns — no ne
 ### Advanced Administration
 
 - Health monitoring and diagnostics
-- Database connection pooling with async write batching
+- Database connection pooling
 - Background task management (notes generation, channel memory summaries)
 - Cache control and statistics
 - Comprehensive logging system
@@ -301,7 +301,6 @@ Edit in `database.py`:
 
 ```python
 MAX_POOL_SIZE = 3              # Database connections
-BATCH_SIZE = 10                # Write batching
 NOTES_UPDATE_INTERVAL = 10     # Messages before note update
 CHANNEL_MEMORY_INTERVAL = 25   # Messages before channel summary
 MAX_CHANNEL_MEMORIES = 50      # Summaries retained per channel
