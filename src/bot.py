@@ -10,14 +10,13 @@ from src.moderation.database import (init_db, increment_server_interaction, queu
                                     flush_user_logs, flush_pending_notes_periodically,
                                     store_channel_memory, CHANNEL_MEMORY_INTERVAL)
 from src.moderation.logging import init_logging_db, logger, log_chat_message
-from src.commands import (admin, user, mystical, news, recommend, relationship, weather, chatgpt, images,
-                        personality, web, memes, crime, finance, memory)
+from src.commands import (admin, user, mystical, recommend, relationship, chatgpt, images,
+                        personality, crime, memory)
 from src.services.personality_engine import maybe_update_traits
 from src.utils.message_util import to_discord_output
 from src.utils.vision_util import analyze_discord_attachment, is_image_attachment
 from src.utils.response_generator import (detect_conversation_type, generate_and_track_response, sanitize_response)
 from src.utils.context_builder import (build_dm_context, build_server_context, format_user_message)
-from src.utils.personality_manager import personality_manager
 
 
 # ============================================================================
@@ -80,7 +79,6 @@ async def on_ready():
     await init_logging_db()
     await client.tree.sync()
     await load_interaction_cache()
-    await personality_manager.load_from_database()
 
     # Background tasks
     client.loop.create_task(increment_server_interaction())

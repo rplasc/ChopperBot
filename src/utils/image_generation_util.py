@@ -199,28 +199,10 @@ async def generate_with_personality_twist(
     
     if not use_personality_style:
         return await enhance_prompt(base_prompt)
-    
-    from src.personalities import get_current_personality
-    personality = get_current_personality()
-    
-    if not personality:
-        return await enhance_prompt(base_prompt)
-    
-    # Add style based on personality
-    style_additions = {
-        "Default": "vibrant colors, dynamic composition, urban aesthetic",
-        "Rogue": "dark atmosphere, cyberpunk style, dystopian, neon accents",
-        "Assistant": "clean, professional, technical illustration"
-    }
-    
-    style = style_additions.get(personality.name, "")
-    
-    if style:
-        enhanced = f"{base_prompt}, {style}"
-    else:
-        enhanced = base_prompt
-    
-    return await enhance_prompt(enhanced)
+
+    # Chopperbot's signature visual style
+    style = "vibrant colors, dynamic composition, urban aesthetic"
+    return await enhance_prompt(f"{base_prompt}, {style}")
 
 async def generate_image_variations(
     base_prompt: str,

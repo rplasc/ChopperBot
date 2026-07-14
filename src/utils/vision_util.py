@@ -3,7 +3,7 @@ import base64
 from typing import List, Dict
 from discord import Attachment
 from src.aclient import client
-from src.utils.personality_manager import get_server_personality
+from src.personalities import get_personality
 from src.moderation.logging import logger
 
 # Vision model configuration
@@ -36,13 +36,11 @@ async def analyze_image(
     messages = []
     
     if use_personality:
-        personality = await get_server_personality(server_id)
-        if personality:
-            messages.append({
-                "role": "system",
-                "content": personality.get_base_prompt()
-            })
-    
+        messages.append({
+            "role": "system",
+            "content": get_personality().get_base_prompt()
+        })
+
     # Add user message with image
     messages.append({
         "role": "user",
@@ -104,13 +102,11 @@ async def analyze_multiple_images(
     messages = []
     
     if use_personality:
-        personality = await get_server_personality(server_id)
-        if personality:
-            messages.append({
-                "role": "system",
-                "content": personality.get_base_prompt()
-            })
-    
+        messages.append({
+            "role": "system",
+            "content": get_personality().get_base_prompt()
+        })
+
     # Build content with all images
     content = [{"type": "text", "text": prompt}]
     

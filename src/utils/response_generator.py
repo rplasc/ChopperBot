@@ -1,8 +1,8 @@
 import re
 from typing import List, Dict, Optional
-from src.utils.personality_manager import get_server_personality
-from src.utils.websearch_util import perform_web_search, format_results_for_prompt
-from src.utils.search_rate_limiter import should_trigger_web_search, sanitize_message_for_search, search_limiter
+from src.personalities import get_personality
+from src.utils.websearch_util import (perform_web_search, format_results_for_prompt,
+                                    should_trigger_web_search, sanitize_search_query)
 from src.services.llm_service import chat_completion
 from src.moderation.logging import logger
 
@@ -86,7 +86,7 @@ async def generate_response(
     for attempt in range(max_retries):
         try:
             # Get personality-specific parameters
-            personality = await get_server_personality(server_id)
+            personality = get_personality()
             params = personality.get_generation_params(conversation_type)
             
             # Adjust temperature slightly on retries to get different output
@@ -139,11 +139,9 @@ async def generate_command_response(
     
     # Optionally include personality for consistent voice
     if use_personality:
-        personality = await get_server_personality(server_id)
-        if personality:
-            # Use base personality without context adaptation
-            system_prompt = personality.get_base_prompt()
-            messages.append({"role": "system", "content": system_prompt})
+        # Use base personality without context adaptation
+        system_prompt = get_personality().get_base_prompt()
+        messages.append({"role": "system", "content": system_prompt})
     
     # Add the command prompt
     messages.append({"role": "user", "content": prompt})
@@ -259,25 +257,22 @@ async def generate_and_track_response(
     channel_key: str,
     server_id: Optional[str] = None
 ) -> str:
-    personality = await get_server_personality(server_id)
+    personality = get_personality()
 
     if getattr(personality, "can_search_web", False):
         user_message = messages[-1]["content"] if messages else ""
 
-        if should_trigger_web_search(user_message, channel_key):
-            clean_query = sanitize_message_for_search(user_message)
+        if should_trigger_web_search(user_message):
+            clean_query = sanitize_search_query(user_message)
             logger.info(f"Web search triggered: '{clean_query}'")
-            try:
-                results = await perform_web_search(clean_query)
-                if results:
-                    snippets = format_results_for_prompt(results)
-                    messages.append({
-                        "role": "system",
-                        "content": f"Web search results:\n{snippets}\nUse these results to answer accurately."
-                    })
-                    search_limiter.record_search(channel_key)
-            except Exception as e:
-                logger.error(f"Search failed: {e}")
+            # perform_web_search never raises; [] means unavailable/no results
+            results = await perform_web_search(clean_query)
+            if results:
+                snippets = format_results_for_prompt(results)
+                messages.append({
+                    "role": "system",
+                    "content": f"Web search results:\n{snippets}\nUse these results to answer accurately."
+                })
 
     response = await generate_response(messages, conversation_type, server_id)
     

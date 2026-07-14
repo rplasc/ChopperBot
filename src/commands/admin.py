@@ -1,31 +1,18 @@
 import time
 import asyncio
-from discord import Interaction, Embed, Color, Member, app_commands
+from discord import Interaction, Embed, Color, Member
 from src.aclient import client
-from src.personalities import personalities
-from src.utils.personality_manager import (
-    set_server_personality,
-    set_server_custom_personality,
-    reset_server_personality,
-    get_server_personality_name,
-    get_server_personality,
-    personality_manager
-) 
+from src.personalities import get_personality
 from src.moderation.database import (
     manual_world_update, get_world_context, get_user_log, delete_user_data,
     delete_world_context, reset_database, delete_world_entry, get_pool_stats,
-    invalidate_user_log_cache, list_world_facts, set_server_personality_lock,
-    get_server_personality_lock, update_personality_notes_with_username,
+    invalidate_user_log_cache, list_world_facts,
+    update_personality_notes_with_username,
     pending_notes_queue, clear_criminal_record
 )
 from src.utils.koboldcpp_util import get_kobold_response
 from src.moderation.logging import logger
-from src.utils.content_filter import filter_controversial, censor_curse_words
 from src.utils.permissions import is_admin, is_owner
-
-# Personality locks persist in database 
-async def is_personality_locked(server_id: str) -> bool:
-    return await get_server_personality_lock(server_id)
 
 # Wrapper for categories
 def admin_only_command(*args, **kwargs):
@@ -36,216 +23,40 @@ def admin_only_command(*args, **kwargs):
 
 
 # ============================================================================
-# PERSONALITY MANAGEMENT COMMANDS
+# CONVERSATION / PERSONALITY COMMANDS
 # ============================================================================
 
-@admin_only_command(name="set_personality", description="Set the bot's personality for THIS server")
-async def set_personality_cmd(interaction: Interaction, personality: str):
-    
-    server_id = str(interaction.guild.id)
-    
-    # Check if locked
-    if await is_personality_locked(server_id) and not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message(
-            "🔒 Personality changes are currently locked by an admin.",
-            ephemeral=True
-        )
-        return
-
-    await interaction.response.defer()
-    
-    if personality in personalities:
-        success = await set_server_personality(server_id, personality)
-        
-        if success:
-            # Clear history for this server only
-            from src.bot import conversation_histories_cache
-            keys_to_clear = [k for k in conversation_histories_cache.keys() if k[0] == server_id]
-            for key in keys_to_clear:
-                del conversation_histories_cache[key]
-            
-            embed = Embed(
-                title="🎭 Personality Updated",
-                description=f"This server's personality is now: **{personality}**",
-                color=Color.green()
-            )
-            logger.info(f"Server {server_id} personality set to {personality}")
-            await interaction.followup.send(embed=embed)
-        else:
-            embed = Embed(
-                title="❌ Invalid Personality",
-                description=f'Available: {", ".join(personalities.keys())}',
-                color=Color.red()
-            )
-            await interaction.followup.send(embed=embed)
-    else:
-        embed = Embed(
-            title="❌ Invalid Personality",
-            description=f'Available options:\n' + '\n'.join(f"• {p}" for p in personalities.keys()),
-            color=Color.red()
-        )
-        await interaction.followup.send(embed=embed)
-
-@set_personality_cmd.autocomplete("personality")
-async def personality_autocomplete(interaction: Interaction, current: str):
-    return [
-        app_commands.Choice(name=personality, value=personality)
-        for personality in personalities.keys()
-        if current.lower() in personality.lower()
-    ]
-    
-@admin_only_command(name="roleplay", description="Set the bot to roleplay as a character (for THIS server)")
-async def roleplay_cmd(interaction: Interaction, character: str):
-    
-    server_id = str(interaction.guild.id)
-    
-    if await is_personality_locked(server_id) and not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message(
-            "🔒 Personality changes are currently locked by an admin.",
-            ephemeral=True
-        )
-        return
-    
-    await interaction.response.defer()
-    
-    censored_character = censor_curse_words(character)
-    
-    if filter_controversial(censored_character):
-        await set_server_custom_personality(server_id, censored_character)
-        
-        from src.bot import conversation_histories_cache
-        keys_to_clear = [k for k in conversation_histories_cache.keys() if k[0] == server_id]
-        for key in keys_to_clear:
-            del conversation_histories_cache[key]
-        
-        embed = Embed(
-            title="🎭 Roleplay Mode Activated",
-            description=f"I will now act like **{censored_character}** in this server!",
-            color=Color.purple()
-        )
-        logger.info(f"Server {server_id} set to roleplay as {censored_character}")
-        await interaction.followup.send(embed=embed)
-    else:
-        embed = Embed(
-            title="❌ Cannot Roleplay",
-            description="Sorry, I cannot pretend to be that character.",
-            color=Color.red()
-        )
-        await interaction.followup.send(embed=embed)
-
-@admin_only_command(name="reset_personality", description="Reset this server to Default personality")
-@is_admin()
-async def reset_personality_cmd(interaction: Interaction):
-    
-    server_id = str(interaction.guild.id)
-    await reset_server_personality(server_id)
-    
-    from src.bot import conversation_histories_cache
-    keys_to_clear = [k for k in conversation_histories_cache.keys() if k[0] == server_id]
-    for key in keys_to_clear:
-        del conversation_histories_cache[key]
-    
-    logger.info(f"Reset personality for server {server_id}")
-    await interaction.response.send_message(
-        "✅ Reset to Default personality for this server.",
-        ephemeral=True
-    )
-
-@admin_only_command(name="lock_personality", description="Lock personality changes to admins only (this server)")
-@is_admin()
-async def lock_personality_cmd(interaction: Interaction):
-    server_id = str(interaction.guild.id)
-    await set_server_personality_lock(server_id, False)
-    logger.info(f"Personality locked for server {server_id}")
-    await interaction.response.send_message(
-        "🔒 Personality changes are now locked to admins only for this server.",
-        ephemeral=True
-    )
-
-@admin_only_command(name="unlock_personality", description="Unlock personality changes (this server)")
-@is_admin()
-async def unlock_personality_cmd(interaction: Interaction):
-    server_id = str(interaction.guild.id)
-    await set_server_personality_lock(server_id, True)
-    logger.info(f"Personality unlocked for server {server_id}")
-    await interaction.response.send_message(
-        "🔓 Personality changes are now unlocked for this server.",
-        ephemeral=True
-    )
-
-@admin_only_command(name="current_personality", description="Show this server's current personality")
-async def current_personality_cmd(interaction: Interaction):    
-    server_id = str(interaction.guild.id)
-    personality_name = await get_server_personality_name(server_id)
-    
-    is_locked = is_personality_locked(server_id)
-    lock_status = "🔒 Locked (admins only)" if is_locked else "🔓 Unlocked"
-    
-    embed = Embed(
-        title=f"🎭 Current Personality for {interaction.guild.name}",
-        description=f"**{personality_name}**\n\n{lock_status}",
-        color=Color.blue()
-    )
-    
-    # Get personality object for details
-    personality = await get_server_personality(server_id)
-    
-    if personality:
-        embed.add_field(
-            name="Quick Stats",
-            value=f"Temperature: {personality.temperature}\n"
-                  f"Max Tokens: {personality.max_tokens_preferred}\n"
-                  f"Creativity: {personality.creativity:.0%}",
-            inline=False
-        )
-    
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-    
-# Resets "memory" and personality back to default
 @admin_only_command(name="refresh", description="Clear conversation history for THIS server")
 @is_admin()
-async def refresh_cmd(interaction: Interaction):    
+async def refresh_cmd(interaction: Interaction):
     await interaction.response.defer()
     server_id = str(interaction.guild.id)
-    
+
     from src.bot import conversation_histories_cache
-    
+
     # Clear only this server's history
     keys_to_clear = [k for k in conversation_histories_cache.keys() if k[0] == server_id]
     cleared_count = len(keys_to_clear)
-    
+
     for key in keys_to_clear:
         del conversation_histories_cache[key]
-    
-    personality_name = await get_server_personality_name(server_id)
-    
+
     await interaction.followup.send(
-        f"🧹 Cleared {cleared_count} conversation(s) for this server!\n"
-        f"_Personality remains: **{personality_name}**_"
+        f"🧹 Cleared {cleared_count} conversation(s) for this server!"
     )
     logger.info(f"History cleared for server {server_id}")
 
-
-# ============================================================================
-# ADVANCED ADMIN COMMANDS
-# ============================================================================
-
-@admin_only_command(name="personality_info", description="Show detailed info about this server's personality")
+@admin_only_command(name="personality_info", description="Show details of the bot's personality")
 @is_admin()
-async def personality_info(interaction: Interaction):    
-    server_id = str(interaction.guild.id)
-    personality = await get_server_personality(server_id)
-    
-    if not personality:
-        await interaction.response.send_message("❌ No personality loaded", ephemeral=True)
-        return
-    
+async def personality_info(interaction: Interaction):
+    personality = get_personality()
+
     embed = Embed(
         title=f"🎭 Personality: {personality.name}",
-        description=f"Details for **{interaction.guild.name}**",
+        description="ChopperBot runs one central personality everywhere.",
         color=Color.purple()
     )
-    
+
     # Parameters
     embed.add_field(
         name="Generation Parameters",
@@ -256,7 +67,7 @@ async def personality_info(interaction: Interaction):
               f"**Creativity:** {personality.creativity:.1%}",
         inline=True
     )
-    
+
     # Characteristics
     embed.add_field(
         name="Characteristics",
@@ -267,7 +78,7 @@ async def personality_info(interaction: Interaction):
               f"**Can Search Web:** {'Yes' if personality.can_search_web else 'No'}",
         inline=True
     )
-    
+
     # Preview of prompt
     prompt_preview = personality.get_base_prompt()[:200] + "..."
     embed.add_field(
@@ -276,44 +87,6 @@ async def personality_info(interaction: Interaction):
         inline=False
     )
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@admin_only_command(name="list_server_personalities", description="Show personality settings across all servers")
-@is_owner()
-async def list_server_personalities_cmd(interaction: Interaction):    
-    all_personalities = personality_manager.get_all_server_personalities()
-    
-    if not all_personalities:
-        await interaction.response.send_message(
-            "📋 All servers are using Default personality.",
-            ephemeral=True
-        )
-        return
-    
-    embed = Embed(
-        title="🌐 Server Personality Assignments",
-        description=f"Showing custom personalities for {len(all_personalities)} server(s)",
-        color=Color.blue()
-    )
-    
-    for server_id, personality_name in list(all_personalities.items())[:20]:
-        try:
-            guild = client.get_guild(int(server_id))
-            server_name = guild.name if guild else f"Unknown Server"
-        except:
-            server_name = f"Server {server_id[:8]}..."
-        
-        lock_emoji = "🔒" if await is_personality_locked(server_id) else "🔓"
-        
-        embed.add_field(
-            name=f"{lock_emoji} {server_name}",
-            value=personality_name,
-            inline=True
-        )
-    
-    if len(all_personalities) > 20:
-        embed.set_footer(text=f"...and {len(all_personalities) - 20} more servers")
-    
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ============================================================================
@@ -850,14 +623,12 @@ async def health_check(interaction: Interaction):
     )
     
     # 7. Personality System
-    from src.utils.personality_manager import personality_manager
-    
-    total_servers = len(personality_manager.get_all_server_personalities())
-    
+    personality = get_personality()
+
     embed.add_field(
         name="🎭 Personality System",
         value=f"🟢 **Status:** Loaded\n"
-              f"🌍 **Servers:** {total_servers} custom",
+              f"🎤 **Voice:** {personality.name} (central)",
         inline=True
     )
     

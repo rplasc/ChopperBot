@@ -1,5 +1,5 @@
 from typing import List, Dict, Optional
-from src.utils.personality_manager import get_server_personality
+from src.personalities import get_personality
 from src.moderation.database import (
     get_user_log_cached,
     get_relevant_user_memories,
@@ -93,7 +93,7 @@ async def build_message_context(
 
     user_notes = await _memory_section(user_id, rag_query)
 
-    personality = await get_server_personality(server_id)
+    personality = get_personality()
     system_content = personality.adapt_for_context(conversation_type, user_notes)
     messages = [{"role": "system", "content": system_content}]
 
