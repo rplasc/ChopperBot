@@ -153,7 +153,7 @@ The bot learns about users over time and retrieves only relevant memories per me
 
 ## Personality
 
-ChopperBot has one central personality: sarcastic West Coast energy — gaming, music, film references, natural slang. Roasts affectionately, switches to genuine when it matters. It is defined once in `src/personalities.py` (`chopperbot`); edit that instance to change the bot's voice everywhere.
+ChopperBot has one central personality: sarcastic, chronically online West Coast energy — fluent in memes, pop culture, and group-chat discourse, with natural slang. Roasts affectionately, switches to genuine when it matters. It is defined once in `src/personalities.py` (`chopperbot`); edit that instance to change the bot's voice everywhere.
 
 The personality maps its trait values to LLM parameters at call time:
 
