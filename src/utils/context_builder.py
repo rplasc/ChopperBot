@@ -7,8 +7,78 @@ from src.moderation.database import (
     get_relevant_channel_memories,
     _fts_escape,
 )
+from src.services.personality_engine import get_persona_context
 from src.utils.history_util import trim_history
 from src.aclient import client
+
+# ============================================================================
+# MODULAR PROMPT SECTIONS
+# Each section builder returns a system-message string (or None to skip),
+# so the final prompt is assembled from independent, testable pieces:
+#   base personality + user memories -> persona profile -> world context
+#   -> channel memories -> conversation history
+# ============================================================================
+
+def _extract_rag_query(history: List[Dict]) -> str:
+    """Use the current user message as the retrieval query."""
+    if history:
+        last = history[-1]
+        if last.get("role") == "user":
+            return _fts_escape(last.get("content", ""))
+    return ""
+
+async def _memory_section(user_id: str, rag_query: str) -> Optional[str]:
+    """Most relevant stored facts about the user (RAG over user_memories)."""
+    if rag_query and rag_query != '*':
+        memories = await get_relevant_user_memories(user_id, rag_query, limit=3)
+        if memories:
+            return "; ".join(memories)
+    # Fallback: denormalized blob (covers no-query and empty FTS result)
+    user_log = await get_user_log_cached(user_id)
+    return user_log[4] if user_log and user_log[4] else None
+
+async def _persona_section(user_id: str, user_name: str) -> Optional[str]:
+    """One-line trait/archetype profile from the personality engine."""
+    persona = await get_persona_context(user_id, user_name)
+    return persona or None
+
+async def _world_section(server_id: str, rag_query: str) -> str:
+    """Server 'world' header plus any world facts relevant to this message."""
+    guild = client.get_guild(int(server_id))
+    server_name = guild.name if guild else "Unknown Server"
+    owner_name = "Unknown"
+    if guild and guild.owner:
+        owner_name = guild.owner.name
+
+    if rag_query and rag_query != '*':
+        relevant_facts = await get_relevant_world_facts(server_id, rag_query, limit=5)
+    else:
+        relevant_facts = []
+
+    world_lines = [
+        f"🌍 **Current World Context**\n"
+        f"• **Location**: {server_name}\n"
+        f"• **Owner/Ruler**: {owner_name}"
+    ]
+    for fact in relevant_facts:
+        key = fact["key"].replace("_", " ").title()
+        world_lines.append(f"• **{key}**: {fact['value']}")
+    return "\n".join(world_lines)
+
+async def _channel_memory_section(
+    server_id: str, channel_id: str, rag_query: str
+) -> Optional[str]:
+    """Long-term channel memories relevant to this message."""
+    if not rag_query or rag_query == '*':
+        return None
+    channel_mems = await get_relevant_channel_memories(
+        server_id, channel_id, rag_query, limit=3
+    )
+    if not channel_mems:
+        return None
+    return "📜 **Relevant past conversations:**\n" + "\n".join(
+        f"• {m}" for m in channel_mems
+    )
 
 async def build_message_context(
     history: List[Dict],
@@ -19,62 +89,28 @@ async def build_message_context(
     max_tokens: int = 2000,
     channel_id: Optional[str] = None,
 ) -> List[Dict]:
-    # Use the current user message as the RAG query
-    rag_query = ""
-    if history:
-        last = history[-1]
-        if last.get("role") == "user":
-            rag_query = _fts_escape(last.get("content", ""))
+    rag_query = _extract_rag_query(history)
 
-    # RAG: retrieve only the most relevant user memory facts
-    user_notes = None
-    if rag_query and rag_query != '*':
-        memories = await get_relevant_user_memories(user_id, rag_query, limit=3)
-        if memories:
-            user_notes = "; ".join(memories)
-    if not user_notes:
-        # Fallback: use the denormalized blob (covers no-query and empty FTS result)
-        user_log = await get_user_log_cached(user_id)
-        user_notes = user_log[4] if user_log and user_log[4] else None
+    user_notes = await _memory_section(user_id, rag_query)
 
     personality = await get_server_personality(server_id)
     system_content = personality.adapt_for_context(conversation_type, user_notes)
     messages = [{"role": "system", "content": system_content}]
 
+    persona = await _persona_section(user_id, user_name)
+    if persona:
+        messages.append({"role": "system", "content": persona})
+
     if server_id:
-        guild = client.get_guild(int(server_id))
-        server_name = guild.name if guild else "Unknown Server"
-        owner_name = "Unknown"
-        if guild and guild.owner:
-            owner_name = guild.owner.name
+        messages.append({
+            "role": "system",
+            "content": await _world_section(server_id, rag_query)
+        })
 
-        # RAG: retrieve only the world facts relevant to this message
-        if rag_query and rag_query != '*':
-            relevant_facts = await get_relevant_world_facts(server_id, rag_query, limit=5)
-        else:
-            relevant_facts = []
-
-        # Always show the header; only attach matched custom facts
-        world_lines = [
-            f"🌍 **Current World Context**\n"
-            f"• **Location**: {server_name}\n"
-            f"• **Owner/Ruler**: {owner_name}"
-        ]
-        for fact in relevant_facts:
-            key = fact["key"].replace("_", " ").title()
-            world_lines.append(f"• **{key}**: {fact['value']}")
-        messages.append({"role": "system", "content": "\n".join(world_lines)})
-
-        # RAG: inject relevant long-term channel memories
-        if channel_id and rag_query and rag_query != '*':
-            channel_mems = await get_relevant_channel_memories(
-                server_id, channel_id, rag_query, limit=3
-            )
-            if channel_mems:
-                mem_text = "📜 **Relevant past conversations:**\n" + "\n".join(
-                    f"• {m}" for m in channel_mems
-                )
-                messages.append({"role": "system", "content": mem_text})
+        if channel_id:
+            channel_section = await _channel_memory_section(server_id, channel_id, rag_query)
+            if channel_section:
+                messages.append({"role": "system", "content": channel_section})
 
     messages.extend(history)
     return trim_history(messages, max_tokens=max_tokens)

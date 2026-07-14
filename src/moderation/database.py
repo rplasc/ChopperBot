@@ -7,6 +7,13 @@ import datetime
 import time
 from contextlib import asynccontextmanager
 from src.utils.koboldcpp_util import get_kobold_response
+from src.services.memory_service import (
+    FACT_EXTRACTION_INSTRUCTIONS,
+    build_fts_query,
+    clamp_importance,
+    parse_fact_lines,
+    rerank_memories,
+)
 from src.moderation.logging import logger
 
 DB_PATH = "data/user_data.db"
@@ -324,6 +331,30 @@ async def init_db():
             END
         """)
 
+        # ---- v2: per-user personality trait profiles ----
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_personality (
+                user_id         TEXT PRIMARY KEY,
+                curiosity       REAL NOT NULL DEFAULT 50,
+                humor           REAL NOT NULL DEFAULT 50,
+                logic           REAL NOT NULL DEFAULT 50,
+                creativity      REAL NOT NULL DEFAULT 50,
+                kindness        REAL NOT NULL DEFAULT 50,
+                competitiveness REAL NOT NULL DEFAULT 50,
+                confidence      REAL NOT NULL DEFAULT 50,
+                updated_at      TEXT
+            )
+        """)
+
+        # ---- v2 migration: importance column on user_memories ----
+        cursor = await db.execute("PRAGMA table_info(user_memories)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        await cursor.close()
+        if "importance" not in columns:
+            await db.execute(
+                "ALTER TABLE user_memories ADD COLUMN importance INTEGER NOT NULL DEFAULT 3"
+            )
+
         await db.commit()
 
         # ---- Migration: split legacy personality_notes blobs into user_memories ----
@@ -373,6 +404,8 @@ async def init_db():
 async def delete_user_data(user_id: str) -> None:
     async with db_pool.get_connection() as db:
         await db.execute("DELETE FROM user_logs WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM user_memories WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM user_personality WHERE user_id = ?", (user_id,))
         await db.execute("DELETE FROM server_interactions WHERE user_id = ?", (user_id,))
         await db.execute("DELETE FROM criminal_records WHERE user_id = ?", (user_id,))
         await db.execute("DELETE FROM civil_cases WHERE defendant_id = ?", (user_id,))
@@ -589,9 +622,7 @@ async def _try_generate_notes(user_id: str, username: str, history: list) -> str
 
     prompt = (
         f"Analyze {username}'s chat messages and extract 3-5 distinct facts.\n"
-        "For each fact, start the line with one of these tags: "
-        "[trait], [interest], [preference], or [behavior].\n"
-        "Output one fact per line. Be specific and neutral.\n\n"
+        f"{FACT_EXTRACTION_INSTRUCTIONS}\n\n"
         f"Messages from {username}:\n"
         + "\n".join(user_texts[-15:])
     )
@@ -631,8 +662,8 @@ async def _try_update_notes(username: str, history: list, old_notes: str) -> str
         f"Existing facts about {username}: {old_notes}\n\n"
         f"Recent messages from {username}:\n{recent}\n\n"
         "List only NEW facts not already covered above.\n"
-        "Prefix each with [trait], [interest], [preference], or [behavior]. "
-        "One fact per line. If nothing new, reply with 'no changes'."
+        f"{FACT_EXTRACTION_INSTRUCTIONS}\n"
+        "If nothing new, reply with 'no changes'."
     )
 
     try:
@@ -1179,17 +1210,59 @@ def _fts_escape(query: str) -> str:
     cleaned = re.sub(r'[^\w\s]', ' ', query).strip()
     return cleaned if cleaned else '*'
 
-async def add_user_memory(user_id: str, category: str, content: str) -> None:
+async def add_user_memory(user_id: str, category: str, content: str, importance: int = 3) -> None:
     """Store a single structured fact about a user and keep the blob in sync."""
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     async with db_pool.get_connection() as db:
         await db.execute(
-            "INSERT INTO user_memories (user_id, category, content, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (user_id, category, content.strip(), now, now)
+            "INSERT INTO user_memories (user_id, category, content, importance, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, category, content.strip(), clamp_importance(importance), now, now)
         )
         await db.commit()
     await _sync_personality_notes_blob(user_id)
+
+async def list_user_memories(user_id: str) -> list[dict]:
+    """Return all stored memories for a user, newest first."""
+    async with db_pool.get_connection() as db:
+        cursor = await db.execute(
+            "SELECT id, category, content, importance, created_at "
+            "FROM user_memories WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,)
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+    return [
+        {"id": r[0], "category": r[1], "content": r[2], "importance": r[3], "created_at": r[4]}
+        for r in rows
+    ]
+
+async def delete_user_memory(user_id: str, memory_id: int) -> bool:
+    """Delete a single memory. Returns False when it doesn't belong to the user."""
+    async with db_pool.get_connection() as db:
+        cursor = await db.execute(
+            "DELETE FROM user_memories WHERE id = ? AND user_id = ?",
+            (memory_id, user_id)
+        )
+        await db.commit()
+        deleted = cursor.rowcount > 0
+        await cursor.close()
+    if deleted:
+        await _sync_personality_notes_blob(user_id)
+    return deleted
+
+async def delete_all_user_memories(user_id: str) -> int:
+    """Delete every memory for a user (also clears the denormalized blob)."""
+    async with db_pool.get_connection() as db:
+        cursor = await db.execute("DELETE FROM user_memories WHERE user_id = ?", (user_id,))
+        await db.execute(
+            "UPDATE user_logs SET personality_notes = NULL WHERE user_id = ?", (user_id,)
+        )
+        await db.commit()
+        deleted = cursor.rowcount
+        await cursor.close()
+    invalidate_user_log_cache(user_id)
+    return deleted
 
 async def _sync_personality_notes_blob(user_id: str) -> None:
     """Rebuild user_logs.personality_notes from all user_memories rows.
@@ -1217,17 +1290,9 @@ async def _sync_personality_notes_blob(user_id: str) -> None:
     invalidate_user_log_cache(user_id)
 
 async def _parse_and_store_facts(user_id: str, raw_text: str) -> None:
-    """Parse LLM-generated [category] fact lines and store each as a user_memory row."""
-    lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
-    for line in lines:
-        m = re.match(r'\[(trait|interest|preference|behavior)\]\s*(.*)', line, re.IGNORECASE)
-        if m:
-            category = m.group(1).lower()
-            content = m.group(2).strip()
-        else:
-            category, content = 'trait', line
-        if content:
-            await add_user_memory(user_id, category, content)
+    """Parse LLM-generated [category|importance] fact lines and store each as a user_memory row."""
+    for fact in parse_fact_lines(raw_text):
+        await add_user_memory(user_id, fact["category"], fact["content"], fact["importance"])
 
 # ============================================================================
 # WORLD MEMORY SYSTEM
@@ -1327,23 +1392,30 @@ async def get_relevant_user_memories(
 
     Falls back to the most-recent rows when the query is empty or FTS fails.
     """
-    escaped = _fts_escape(query)
-    if escaped and escaped != '*':
+    fts_query = build_fts_query(query)
+    if fts_query:
         try:
             async with db_pool.get_connection() as db:
+                # Over-fetch by relevance, then re-rank blending BM25,
+                # importance, and recency (see memory_service.rerank_memories)
                 cursor = await db.execute("""
-                    SELECT um.content
+                    SELECT um.content, bm25(user_memories_fts) AS bm25,
+                           um.importance, um.created_at
                     FROM user_memories_fts
                     JOIN user_memories um ON user_memories_fts.rowid = um.id
                     WHERE user_memories_fts MATCH ?
                       AND um.user_id = ?
                     ORDER BY rank
                     LIMIT ?
-                """, (escaped, user_id, limit))
+                """, (fts_query, user_id, limit * 3))
                 rows = await cursor.fetchall()
                 await cursor.close()
             if rows:
-                return [row[0] for row in rows]
+                candidates = [
+                    {"content": r[0], "bm25": r[1], "importance": r[2], "created_at": r[3]}
+                    for r in rows
+                ]
+                return [m["content"] for m in rerank_memories(candidates, limit=limit)]
         except Exception as e:
             logger.error(f"[RAG] user_memories FTS query failed for {user_id}: {e}")
 
@@ -1368,8 +1440,8 @@ async def get_relevant_world_facts(
 
     Falls back to all facts (original behaviour) on empty query or FTS failure.
     """
-    escaped = _fts_escape(query)
-    if escaped and escaped != '*':
+    fts_query = build_fts_query(query)
+    if fts_query:
         try:
             async with db_pool.get_connection() as db:
                 cursor = await db.execute("""
@@ -1380,7 +1452,7 @@ async def get_relevant_world_facts(
                       AND ws.server_id = ?
                     ORDER BY rank
                     LIMIT ?
-                """, (escaped, server_id, limit))
+                """, (fts_query, server_id, limit))
                 rows = await cursor.fetchall()
                 await cursor.close()
             if rows:
@@ -1430,8 +1502,8 @@ async def get_relevant_channel_memories(
     limit: int = 3
 ) -> list[str]:
     """Return the most relevant channel memory summaries for the given query via FTS5 BM25."""
-    escaped = _fts_escape(query)
-    if not escaped or escaped == '*':
+    fts_query = build_fts_query(query)
+    if not fts_query:
         return []
     try:
         async with db_pool.get_connection() as db:
@@ -1444,7 +1516,7 @@ async def get_relevant_channel_memories(
                   AND cm.channel_id = ?
                 ORDER BY rank
                 LIMIT ?
-            """, (escaped, server_id, channel_id, limit))
+            """, (fts_query, server_id, channel_id, limit))
             rows = await cursor.fetchall()
             await cursor.close()
         return [row[0] for row in rows]

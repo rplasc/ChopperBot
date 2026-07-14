@@ -1,10 +1,9 @@
-import aiohttp
 import re
 from typing import List, Dict, Optional
 from src.utils.personality_manager import get_server_personality
 from src.utils.websearch_util import perform_web_search, format_results_for_prompt
 from src.utils.search_rate_limiter import should_trigger_web_search, sanitize_message_for_search, search_limiter
-from src.aclient import client
+from src.services.llm_service import chat_completion
 from src.moderation.logging import logger
 
 def detect_conversation_type(content: str) -> str:
@@ -120,29 +119,9 @@ async def generate_response(
     return "I'm having trouble forming a response right now. Could you try rephrasing that?"
 
 async def _call_kobold_api(messages: List[Dict], params: Dict) -> str:
-    url = client.kobold_text_api
-    
-    # Build full payload — sampling params come from personality traits, not hardcoded values
-    payload = {
-        "messages": messages,
-        "temperature": params.get("temperature", 0.8),
-        "top_p": params.get("top_p", 0.9),
-        "top_k": 50,
-        "frequency_penalty": params.get("frequency_penalty", 1.0),
-        "presence_penalty": params.get("presence_penalty", 0.6),
-        "repetition_penalty": params.get("repetition_penalty", 1.15),
-        "max_tokens": params.get("max_tokens", 400),
-        "stop": ["\nUser:", "\nSystem:", "\nAssistant:", "\n\n\n"],
-    }
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-            if resp.status != 200:
-                error_text = await resp.text()
-                raise Exception(f"API error {resp.status}: {error_text}")
-            
-            data = await resp.json()
-            return data["choices"][0]["message"]["content"]
+    # Sampling params come from personality traits; the provider-agnostic
+    # LLM service fills in defaults and filters per provider.
+    return await chat_completion(messages, params)
 
 # ============================================================================
 # COMMAND-SPECIFIC GENERATION (for crystal ball, news, etc.)

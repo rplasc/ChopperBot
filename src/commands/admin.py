@@ -386,12 +386,6 @@ async def delete_world(interaction: Interaction):
     server_id = str(interaction.guild.id)
     await delete_world_context(server_id)
 
-    from src.moderation.database import world_histories, world_update_cooldowns
-    if server_id in world_histories:
-        del world_histories[server_id]
-    if server_id in world_update_cooldowns:
-        del world_update_cooldowns[server_id]
-    
     logger.info(f"Deleted world context for {interaction.guild.name}")
     await interaction.response.send_message("✅ Deleted world context for this server", ephemeral=True)
 
@@ -867,15 +861,13 @@ async def health_check(interaction: Interaction):
         inline=True
     )
     
-    # 8. World Memory System
-    from src.moderation.database import world_histories
-    
-    active_worlds = len(world_histories)
-    
+    # 8. LLM Provider
+    from src.services.llm_service import llm_service
+
     embed.add_field(
-        name="🌍 World Memory",
-        value=f"🟢 **Status:** Active\n"
-              f"📚 **Tracking:** {active_worlds} servers",
+        name="🧠 LLM Provider",
+        value=f"🟢 **Provider:** {llm_service.provider}\n"
+              f"🎛️ **Model:** {llm_service.model or 'server default'}",
         inline=True
     )
     
@@ -912,13 +904,11 @@ async def reset_db(interaction: Interaction, confirm: str):
     await reset_database()
 
     from src.bot import conversation_histories_cache
-    from src.moderation.database import interaction_cache, world_histories, world_update_cooldowns
-    
+    from src.moderation.database import interaction_cache
+
     conversation_histories_cache.clear()
     interaction_cache.clear()
-    world_histories.clear()
-    world_update_cooldowns.clear()
-    
+
     logger.warning("DATABASE FULLY RESET by admin")
 
     await interaction.followup.send("⚠️ Database has been fully reset!", ephemeral=True)

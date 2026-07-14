@@ -11,7 +11,8 @@ from src.moderation.database import (init_db, increment_server_interaction, queu
                                     store_channel_memory, CHANNEL_MEMORY_INTERVAL)
 from src.moderation.logging import init_logging_db, logger, log_chat_message
 from src.commands import (admin, user, mystical, news, recommend, relationship, weather, chatgpt, images,
-                        personality, web, memes, crime, finance)
+                        personality, web, memes, crime, finance, memory)
+from src.services.personality_engine import maybe_update_traits
 from src.utils.message_util import to_discord_output
 from src.utils.vision_util import analyze_discord_attachment, is_image_attachment
 from src.utils.response_generator import (detect_conversation_type, generate_and_track_response, sanitize_response)
@@ -270,6 +271,7 @@ async def update_user_stats(server_id, user_id, user_name, history, channel_id: 
     interactions = await get_user_interactions(user_id)
     user_history = [msg for msg in history if msg.get("role") == "user"]
     asyncio.create_task(maybe_queue_notes_update(user_id, user_name, user_history, interactions))
+    asyncio.create_task(maybe_update_traits(user_id, user_name, user_history, interactions))
 
     # Channel memory: accumulate and periodically summarise
     if channel_id and server_id:
