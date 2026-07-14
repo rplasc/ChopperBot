@@ -1,9 +1,8 @@
 import discord
 import random
-from discord import Interaction, Embed, Member, Color
+from discord import Interaction, Embed, Color
 from src.aclient import client
 from src.utils.tarot_data import TAROT_CARDS
-from src.utils.spellbook import SPELLS
 from src.moderation.logging import logger
 from src.utils.response_generator import generate_roleplay_response
 
@@ -196,17 +195,6 @@ async def tarot_spread(interaction: Interaction):
     embed.set_footer(text="Select a card below to explore it in depth.")
 
     await interaction.followup.send(embed=embed, view=TarotSpreadView(spread, embed))
-
-
-@client.tree.command(name="cast", description="Cast a random spell on someone.")
-async def cast(interaction: Interaction, target: Member):
-    user_id = interaction.user.id
-    target_id = target._user.id
-    spell = random.choice(SPELLS)
-    await interaction.response.send_message(
-        f"<@{user_id}> has cast **{spell['name']}!** on <@{target_id}>! {spell['message']}"
-    )
-
 
 @client.tree.command(name="crystal_ball", description="Ask the crystal a question and it will generate an answer for you.")
 async def crystal_ball(interaction: Interaction, question: str):
